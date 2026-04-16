@@ -1,7 +1,7 @@
 <div align="center">
   <br />
     <a href="#" target="_blank">
-      <img src="public/readme/hero.jpg" alt="Project Banner">
+      <!-- <img src="public/readme/hero.jpg" alt="Project Banner"> -->
     </a>
   <br />
 
