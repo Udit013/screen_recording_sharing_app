@@ -670,4 +670,150 @@
       }
     }
   }
+
+  /* share button */
+  .share-btn {
+    @apply p-2 rounded-full hover:bg-pink-10 transition-colors;
+  }
+
+  /* share modal */
+  .share-modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm;
+  }
+
+  .share-modal {
+    @apply bg-white rounded-20 shadow-20 w-full max-w-md mx-4 p-6 flex flex-col gap-5;
+
+    .share-modal-header {
+      @apply flex items-center justify-between;
+
+      h3 {
+        @apply text-xl font-bold text-dark-100;
+      }
+
+      button {
+        @apply text-2xl text-gray-100 hover:text-dark-100 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-20;
+      }
+    }
+
+    .share-modal-body {
+      @apply flex flex-col gap-4;
+
+      .share-expiry {
+        @apply text-xs text-gray-100 font-medium;
+      }
+
+      .share-description {
+        @apply text-sm text-gray-100;
+      }
+
+      .share-url-row {
+        @apply flex gap-2;
+
+        .share-url-input {
+          @apply flex-1 text-xs border border-gray-20 rounded-[12px] px-3 py-2 text-dark-100 bg-gray-40 focus:outline-none truncate;
+        }
+
+        .share-copy-btn {
+          @apply py-2 px-4 bg-pink-100 text-white text-sm font-semibold rounded-[12px] shrink-0;
+        }
+      }
+
+      .share-generate-btn {
+        @apply w-full py-3 bg-pink-100 text-white font-semibold rounded-4xl hover:opacity-90 transition-opacity disabled:opacity-50;
+      }
+
+      .share-revoke-btn {
+        @apply text-sm text-orange-100 font-medium hover:underline w-fit;
+      }
+    }
+  }
+
+  /* AI summary */
+  .ai-summary {
+    @apply flex flex-col gap-4;
+
+    .summary-text {
+      @apply text-sm font-medium text-dark-100 leading-relaxed;
+    }
+
+    .tags-container {
+      @apply flex flex-wrap gap-2;
+
+      .tag {
+        @apply text-xs bg-pink-10 text-pink-100 px-3 py-1 rounded-full font-medium;
+      }
+    }
+  }
+
+  /* chapters */
+  .chapters-container {
+    @apply flex flex-col gap-3;
+
+    .chapters-list {
+      @apply flex flex-col gap-1;
+
+      .chapter-item {
+        @apply flex items-center gap-2;
+
+        &:hover .chapter-remove-btn {
+          opacity: 1;
+        }
+
+        .chapter-seek-btn {
+          @apply flex items-center gap-3 flex-1 py-2 px-3 rounded-lg hover:bg-pink-10 transition-colors text-left;
+
+          .chapter-time {
+            @apply text-xs font-bold text-pink-100 font-mono shrink-0 w-12;
+          }
+
+          .chapter-title {
+            @apply text-sm font-medium text-dark-100 truncate;
+          }
+        }
+
+        .chapter-remove-btn {
+          @apply text-gray-100 hover:text-orange-100 w-6 h-6 flex items-center justify-center rounded-full text-lg leading-none transition-opacity;
+          opacity: 0;
+        }
+      }
+    }
+
+    .chapter-add-section {
+      @apply mt-2;
+
+      .chapter-add-trigger {
+        @apply text-sm text-pink-100 font-semibold hover:underline;
+      }
+
+      .chapter-form {
+        @apply flex flex-col gap-2;
+
+        .chapter-input {
+          @apply border border-gray-20 rounded-[12px] px-3 py-2 text-sm text-dark-100 placeholder:text-gray-100 focus:outline-pink-100;
+        }
+
+        .chapter-form-actions {
+          @apply flex gap-2;
+
+          .chapter-save-btn {
+            @apply py-2 px-4 bg-pink-100 text-white text-sm font-semibold rounded-[12px] disabled:opacity-50;
+          }
+
+          .chapter-cancel-btn {
+            @apply py-2 px-4 border border-gray-20 text-dark-100 text-sm font-semibold rounded-[12px];
+          }
+        }
+      }
+    }
+  }
+
+  /* camera toggle in record screen */
+  .camera-toggle {
+    @apply flex items-center gap-2 text-sm text-gray-100 font-medium px-1 mt-1 cursor-pointer;
+
+    input[type="checkbox"] {
+      @apply w-4 h-4 accent-pink-100;
+    }
+  }
 }

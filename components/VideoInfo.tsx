@@ -1,19 +1,44 @@
 "use client";
+
 import { cn, parseTranscript } from "@/lib/utils";
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import EmptyState from "./EmptyState";
+import VideoChapters from "./VideoChapters";
 import { infos } from "@/constants";
+
+interface VideoInfoFullProps extends VideoInfoProps {
+  onSeek?: (seconds: number) => void;
+}
 
 const VideoInfo = ({
   transcript,
+  aiSummary,
+  tags,
+  chapters,
   createdAt,
   description,
   videoId,
   videoUrl,
   title,
-}: VideoInfoProps) => {
-  const [info, setInfo] = useState("transcript");
-  const parsedTranscript = parseTranscript(transcript || "");
+  ownerId,
+  onSeek,
+}: VideoInfoFullProps) => {
+  const [activeTab, setActiveTab] = useState("transcript");
+  const parsedTranscript = parseTranscript(transcript ?? "");
+
+  const metaDatas = [
+    {
+      label: "Video title",
+      value: `${title} — ${new Date(createdAt).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })}`,
+    },
+    { label: "Video description", value: description },
+    { label: "Video ID", value: videoId },
+    { label: "Video URL", value: videoUrl },
+  ];
 
   const renderTranscript = () => (
     <ul className="transcript">
@@ -28,34 +53,45 @@ const VideoInfo = ({
         <EmptyState
           icon="/assets/icons/copy.svg"
           title="No transcript available"
-          description="This video doesn’t include any transcribed content!"
+          description="This video doesn't include any transcribed content yet."
         />
       )}
     </ul>
   );
 
-  const metaDatas = [
-    {
-      label: "Video title",
-      value: `${title} - ${new Date(createdAt).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      })}`,
-    },
-    {
-      label: "Video description",
-      value: description,
-    },
-    {
-      label: "Video id",
-      value: videoId,
-    },
-    {
-      label: "Video url",
-      value: videoUrl,
-    },
-  ];
+  const renderAiSummary = () => (
+    <div className="ai-summary">
+      {aiSummary ? (
+        <>
+          <p className="summary-text">{aiSummary}</p>
+          {tags && tags.length > 0 && (
+            <div className="tags-container">
+              {tags.map((tag, i) => (
+                <span key={i} className="tag">
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <EmptyState
+          icon="/assets/icons/message.svg"
+          title="No AI summary yet"
+          description="AI summary will be generated automatically once the video finishes processing."
+        />
+      )}
+    </div>
+  );
+
+  const renderChapters = () => (
+    <VideoChapters
+      chapters={chapters}
+      videoId={videoId}
+      ownerId={ownerId}
+      onSeek={onSeek}
+    />
+  );
 
   const renderMetadata = () => (
     <div className="metadata">
@@ -64,7 +100,7 @@ const VideoInfo = ({
           <h2>{label}</h2>
           <p
             className={cn({
-              "text-pink-100 truncate": label === "Video url",
+              "text-pink-100 truncate": label === "Video URL",
             })}
           >
             {value}
@@ -74,6 +110,16 @@ const VideoInfo = ({
     </div>
   );
 
+  const renderContent = () => {
+    switch (activeTab) {
+      case "transcript": return renderTranscript();
+      case "ai summary": return renderAiSummary();
+      case "chapters": return renderChapters();
+      case "metadata": return renderMetadata();
+      default: return null;
+    }
+  };
+
   return (
     <section className="video-info">
       <nav>
@@ -81,15 +127,15 @@ const VideoInfo = ({
           <button
             key={item}
             className={cn({
-              "text-pink-100 border-b-2 border-pink-100": info === item,
+              "text-pink-100 border-b-2 border-pink-100": activeTab === item,
             })}
-            onClick={() => setInfo(item)}
+            onClick={() => setActiveTab(item)}
           >
             {item}
           </button>
         ))}
       </nav>
-      {info === "transcript" ? renderTranscript() : renderMetadata()}
+      {renderContent()}
     </section>
   );
 };

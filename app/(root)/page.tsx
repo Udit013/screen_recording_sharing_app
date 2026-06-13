@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { EmptyState, Pagination, SharedHeader, VideoCard } from "@/components";
 import { getAllVideos } from "@/lib/actions/video";
 

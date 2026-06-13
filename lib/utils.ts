@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { ilike, sql } from "drizzle-orm";
+import { ilike, or, sql } from "drizzle-orm";
 import { videos } from "@/drizzle/schema";
 import { DEFAULT_VIDEO_CONFIG, DEFAULT_RECORDING_CONFIG } from "@/constants";
 
@@ -14,8 +14,6 @@ export const updateURLParams = (
   basePath: string = "/"
 ): string => {
   const params = new URLSearchParams(currentParams.toString());
-
-  // Process each parameter update
   Object.entries(updates).forEach(([name, value]) => {
     if (value) {
       params.set(name, value);
@@ -23,18 +21,15 @@ export const updateURLParams = (
       params.delete(name);
     }
   });
-
   return `${basePath}?${params.toString()}`;
 };
 
-// Get env helper function
 export const getEnv = (key: string): string => {
   const value = process.env[key];
   if (!value) throw new Error(`Missing required env: ${key}`);
   return value;
 };
 
-// API fetch helper with required Bunny CDN options
 export const apiFetch = async <T = Record<string, unknown>>(
   url: string,
   options: Omit<ApiFetchOptions, "bunnyType"> & {
@@ -55,7 +50,7 @@ export const apiFetch = async <T = Record<string, unknown>>(
       : "BUNNY_STORAGE_ACCESS_KEY"
   );
 
-  const requestHeaders = {
+  const requestHeaders: Record<string, string> = {
     ...headers,
     AccessKey: key,
     ...(bunnyType === "stream" && {
@@ -73,29 +68,22 @@ export const apiFetch = async <T = Record<string, unknown>>(
   const response = await fetch(url, requestOptions);
 
   if (!response.ok) {
-    throw new Error(`API error ${response.text()}`);
+    const errText = await response.text().catch(() => response.statusText);
+    throw new Error(`API error ${response.status}: ${errText}`);
   }
 
   if (method === "DELETE" || !expectJson) {
     return true as T;
   }
 
-  return await response.json();
+  return response.json() as Promise<T>;
 };
 
-// Higher order function to handle errors
 export const withErrorHandling = <T, A extends unknown[]>(
   fn: (...args: A) => Promise<T>
 ) => {
   return async (...args: A): Promise<T> => {
-    try {
-      const result = await fn(...args);
-      return result;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
-      return errorMessage as unknown as T;
-    }
+    return fn(...args);
   };
 };
 
@@ -143,7 +131,8 @@ export const generatePagination = (currentPage: number, totalPages: number) => {
 };
 
 export const getMediaStreams = async (
-  withMic: boolean
+  withMic: boolean,
+  withCamera: boolean
 ): Promise<MediaStreams> => {
   const displayStream = await navigator.mediaDevices.getDisplayMedia({
     video: DEFAULT_VIDEO_CONFIG,
@@ -151,16 +140,22 @@ export const getMediaStreams = async (
   });
 
   const hasDisplayAudio = displayStream.getAudioTracks().length > 0;
-  let micStream: MediaStream | null = null;
 
+  let micStream: MediaStream | null = null;
   if (withMic) {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    micStream
-      .getAudioTracks()
-      .forEach((track: MediaStreamTrack) => (track.enabled = true));
+    micStream = await navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .catch(() => null);
   }
 
-  return { displayStream, micStream, hasDisplayAudio };
+  let cameraStream: MediaStream | null = null;
+  if (withCamera) {
+    cameraStream = await navigator.mediaDevices
+      .getUserMedia({ video: { width: 320, height: 240, facingMode: "user" } })
+      .catch(() => null);
+  }
+
+  return { displayStream, micStream, cameraStream, hasDisplayAudio };
 };
 
 export const createAudioMixer = (
@@ -185,12 +180,19 @@ export const createAudioMixer = (
   return destination;
 };
 
-export const setupMediaRecorder = (stream: MediaStream) => {
+export const setupRecording = (
+  stream: MediaStream,
+  handlers: RecordingHandlers
+): MediaRecorder => {
+  let recorder: MediaRecorder;
   try {
-    return new MediaRecorder(stream, DEFAULT_RECORDING_CONFIG);
+    recorder = new MediaRecorder(stream, DEFAULT_RECORDING_CONFIG);
   } catch {
-    return new MediaRecorder(stream);
+    recorder = new MediaRecorder(stream);
   }
+  recorder.ondataavailable = handlers.onDataAvailable;
+  recorder.onstop = handlers.onStop;
+  return recorder;
 };
 
 export const getVideoDuration = (url: string): Promise<number | null> =>
@@ -212,16 +214,6 @@ export const getVideoDuration = (url: string): Promise<number | null> =>
     video.src = url;
   });
 
-export const setupRecording = (
-  stream: MediaStream,
-  handlers: RecordingHandlers
-): MediaRecorder => {
-  const recorder = new MediaRecorder(stream, DEFAULT_RECORDING_CONFIG);
-  recorder.ondataavailable = handlers.onDataAvailable;
-  recorder.onstop = handlers.onStop;
-  return recorder;
-};
-
 export const cleanupRecording = (
   recorder: MediaRecorder | null,
   stream: MediaStream | null,
@@ -230,11 +222,8 @@ export const cleanupRecording = (
   if (recorder?.state !== "inactive") {
     recorder?.stop();
   }
-
-  stream?.getTracks().forEach((track: MediaStreamTrack) => track.stop());
-  originalStreams.forEach((s) =>
-    s.getTracks().forEach((track: MediaStreamTrack) => track.stop())
-  );
+  stream?.getTracks().forEach((track) => track.stop());
+  originalStreams.forEach((s) => s.getTracks().forEach((track) => track.stop()));
 };
 
 export const createRecordingBlob = (
@@ -266,7 +255,7 @@ export function parseTranscript(transcript: string): TranscriptEntry[] {
         tempText = [];
       }
       startTime = timeMatch[1] ?? null;
-    } else if (trimmedLine) {
+    } else if (trimmedLine && !trimmedLine.match(/^\d+$/)) {
       tempText.push(trimmedLine);
     }
 
@@ -287,25 +276,35 @@ export function parseTranscript(transcript: string): TranscriptEntry[] {
 export function daysAgo(inputDate: Date): string {
   const input = new Date(inputDate);
   const now = new Date();
-
   const diffTime = now.getTime() - input.getTime();
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
-  if (diffDays <= 0) {
-    return "Today";
-  } else if (diffDays === 1) {
-    return "1 day ago";
-  } else {
-    return `${diffDays} days ago`;
-  }
+  if (diffDays <= 0) return "Today";
+  if (diffDays === 1) return "1 day ago";
+  return `${diffDays} days ago`;
 }
 
-export const createIframeLink = (videoId: string) =>
-  `https://iframe.mediadelivery.net/embed/421422/${videoId}?autoplay=true&preload=true`;
+export const formatDuration = (seconds: number | null): string => {
+  if (!seconds || seconds <= 0) return "";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+};
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-export const doesTitleMatch = (videos: any, searchQuery: string) =>
-  ilike(
-    sql`REPLACE(REPLACE(REPLACE(LOWER(${videos.title}), '-', ''), '.', ''), ' ', '')`,
-    `%${searchQuery.replace(/[-. ]/g, "").toLowerCase()}%`
+export const createIframeLink = (videoId: string, startTime?: number) => {
+  const libraryId = process.env.NEXT_PUBLIC_BUNNY_LIBRARY_ID;
+  const base = `https://iframe.mediadelivery.net/embed/${libraryId}/${videoId}?autoplay=true&preload=true`;
+  return startTime ? `${base}&t=${startTime}` : base;
+};
+
+export const doesContentMatch = (searchQuery: string) =>
+  or(
+    ilike(
+      sql`REPLACE(REPLACE(REPLACE(LOWER(${videos.title}), '-', ''), '.', ''), ' ', '')`,
+      `%${searchQuery.replace(/[-. ]/g, "").toLowerCase()}%`
+    ),
+    ilike(videos.transcript, `%${searchQuery}%`),
+    ilike(videos.aiSummary, `%${searchQuery}%`)
   );

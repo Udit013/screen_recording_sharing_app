@@ -1,70 +1,81 @@
 "use client";
 
 import { cn, createIframeLink } from "@/lib/utils";
-import { useEffect, useRef, useState } from "react";
-import {
-  incrementVideoViews,
-  getVideoProcessingStatus,
-} from "@/lib/actions/video";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { incrementVideoViews, getVideoProcessingStatus } from "@/lib/actions/video";
 import { initialVideoState } from "@/constants";
 
-const VideoPlayer = ({ videoId, className }: VideoPlayerProps) => {
+const VideoPlayer = ({ videoId, className, onProcessed }: VideoPlayerProps) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [state, setState] = useState(initialVideoState);
+  const [startTime, setStartTime] = useState<number | undefined>(undefined);
+  const hasNotifiedProcessed = useRef(false);
 
-  useEffect(() => {
-    const checkProcessingStatus = async () => {
+  const checkProcessingStatus = useCallback(async () => {
+    try {
       const status = await getVideoProcessingStatus(videoId);
-      setState((prev) => ({
-        ...prev,
-        isProcessing: !status.isProcessed,
-      }));
-
+      setState((prev) => ({ ...prev, isProcessing: !status.isProcessed }));
       return status.isProcessed;
-    };
-
-    checkProcessingStatus();
-
-    const intervalId = setInterval(async () => {
-      const isProcessed = await checkProcessingStatus();
-      if (isProcessed) {
-        clearInterval(intervalId);
-      }
-    }, 3000);
-    return () => {
-      clearInterval(intervalId);
-    };
+    } catch {
+      return false;
+    }
   }, [videoId]);
 
   useEffect(() => {
-    if (state.isLoaded && !state.hasIncrementedView && !state.isProcessing) {
-      const incrementView = async () => {
-        try {
-          await incrementVideoViews(videoId);
-          setState((prev) => ({ ...prev, hasIncrementedView: true }));
-        } catch (error) {
-          console.error("Failed to increment view count:", error);
-        }
-      };
+    let intervalId: ReturnType<typeof setInterval>;
 
-      incrementView();
+    checkProcessingStatus().then((isProcessed) => {
+      if (isProcessed) {
+        if (!hasNotifiedProcessed.current) {
+          hasNotifiedProcessed.current = true;
+          onProcessed?.();
+        }
+        return;
+      }
+
+      intervalId = setInterval(async () => {
+        const done = await checkProcessingStatus();
+        if (done) {
+          clearInterval(intervalId);
+          if (!hasNotifiedProcessed.current) {
+            hasNotifiedProcessed.current = true;
+            onProcessed?.();
+          }
+        }
+      }, 3000);
+    });
+
+    return () => clearInterval(intervalId);
+  }, [videoId, checkProcessingStatus, onProcessed]);
+
+  useEffect(() => {
+    if (state.isLoaded && !state.hasIncrementedView && !state.isProcessing) {
+      incrementVideoViews(videoId).catch(console.error);
+      setState((prev) => ({ ...prev, hasIncrementedView: true }));
     }
   }, [videoId, state.isLoaded, state.hasIncrementedView, state.isProcessing]);
 
+  const seekTo = (seconds: number) => {
+    setStartTime(seconds);
+    if (iframeRef.current) {
+      iframeRef.current.src = createIframeLink(videoId, seconds);
+    }
+  };
+
   return (
-    <div className={cn("video-player", className)}>
+    <div className={cn("video-player", className)} id="video-player-container">
       {state.isProcessing ? (
         <div>
-          <p>Processing video...</p>
+          <p>Processing video, please wait…</p>
         </div>
       ) : (
         <iframe
           ref={iframeRef}
-          src={createIframeLink(videoId)}
+          src={createIframeLink(videoId, startTime)}
           loading="lazy"
           title="Video player"
           style={{ border: 0, zIndex: 50 }}
-          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture"
+          allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen"
           allowFullScreen
           onLoad={() => setState((prev) => ({ ...prev, isLoaded: true }))}
         />

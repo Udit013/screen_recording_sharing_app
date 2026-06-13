@@ -6,6 +6,7 @@ export { default as FormField } from "./FormField";
 export { default as VideoPlayer } from "./VideoPlayer";
 export { default as VideoDetailHeader } from "./VideoDetailHeader";
 export { default as VideoInfo } from "./VideoInfo";
+export { default as VideoChapters } from "./VideoChapters";
 export { default as SharedHeader } from "./SharedHeader";
 export { default as EmptyState } from "./EmptyState";
 export { default as DropdownList } from "./DropdownList";

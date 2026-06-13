@@ -63,14 +63,23 @@ export const videos = pgTable("videos", {
   title: text("title").notNull(),
   description: text("description").notNull(),
   videoUrl: text("video_url").notNull(),
-  videoId: text("video_id").notNull(),
+  videoId: text("video_id").notNull().unique(),
   thumbnailUrl: text("thumbnail_url").notNull(),
-  visibility: text("visibility").$type<"public" | "private">().notNull(),
+  visibility: text("visibility")
+    .$type<"public" | "private" | "link-only">()
+    .notNull()
+    .default("public"),
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
   views: integer("views").notNull().default(0),
   duration: integer("duration"),
+  transcript: text("transcript"),
+  aiSummary: text("ai_summary"),
+  tags: text("tags").array().default([]),
+  shareToken: text("share_token").unique(),
+  shareTokenExpiry: timestamp("share_token_expiry"),
+  chapters: jsonb("chapters").$type<Chapter[]>().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -80,4 +89,5 @@ export const schema = {
   session,
   account,
   verification,
+  videos,
 };

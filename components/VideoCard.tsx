@@ -3,6 +3,7 @@ import Image from "next/image";
 import ImageWithFallback from "./ImageWithFallback";
 import Link from "next/link";
 import { useState } from "react";
+import { formatDuration } from "@/lib/utils";
 
 const VideoCard = ({
   id,
@@ -22,10 +23,10 @@ const VideoCard = ({
     e.preventDefault();
     navigator.clipboard.writeText(`${window.location.origin}/video/${id}`);
     setCopied(true);
-    setTimeout(() => {
-      setCopied(false);
-    }, 3000);
+    setTimeout(() => setCopied(false), 3000);
   };
+
+  const durationLabel = formatDuration(duration);
 
   return (
     <Link href={`/video/${id}`} className="video-card">
@@ -80,8 +81,8 @@ const VideoCard = ({
           height={18}
         />
       </button>
-      {duration && (
-        <div className="duration">{Math.ceil(duration / 60)}min</div>
+      {durationLabel && (
+        <div className="duration">{durationLabel}</div>
       )}
     </Link>
   );
