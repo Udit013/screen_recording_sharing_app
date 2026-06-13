@@ -98,12 +98,6 @@ declare global {
     shareToken?: string | null;
   }
 
-  interface VideoPlayerProps {
-    videoId: string;
-    className?: string;
-    onProcessed?: () => void;
-  }
-
   interface VideoInfoProps {
     transcript?: string | null;
     aiSummary?: string | null;
@@ -125,6 +119,7 @@ declare global {
 
   interface VideoDetails {
     videoId: string;
+    videoUrl: string;
     title: string;
     description: string;
     thumbnailUrl: string;
@@ -133,46 +128,9 @@ declare global {
     duration?: number | null;
   }
 
-  interface BunnyVideoResponse {
-    guid: string;
-    status: number;
-    encodeProgress?: number;
-  }
-
   type ApiResponse<T> =
     | ({ success: true; error: null } & T)
     | { success: false; error: string };
-
-  interface ApiFetchOptions {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: object;
-    expectJson?: boolean;
-    bunnyType: "stream" | "storage";
-  }
-
-  interface BunnyStreamApiOptions {
-    method?: string;
-    body?: object;
-  }
-
-  interface VideoUploadUrlResponse {
-    videoId: string;
-    uploadUrl: string;
-    accessKey: string;
-  }
-
-  interface ThumbnailUploadUrlResponse {
-    uploadUrl: string;
-    cdnUrl: string;
-    accessKey: string;
-  }
-
-  interface VideoProcessingStatus {
-    isProcessed: boolean;
-    encodingProgress: number;
-    status: number;
-  }
 
   interface VideoWithUserResult {
     video: {
@@ -261,6 +219,16 @@ declare global {
     token: string;
     expiry: Date;
     shareUrl: string;
+  }
+
+  interface CloudinaryUploadParams {
+    uploadUrl: string;
+    publicId: string;
+    signature: string;
+    timestamp: number;
+    apiKey: string;
+    cloudName: string;
+    resourceType: "video" | "image";
   }
 }
 

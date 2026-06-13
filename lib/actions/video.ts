@@ -6,28 +6,10 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, gt, or, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { apiFetch, doesContentMatch, getEnv, getOrderByClause } from "@/lib/utils";
-import { BUNNY, SHARE_TOKEN_EXPIRY_DAYS } from "@/constants";
-import { analyzeTranscript } from "@/lib/gemini";
-import aj, { fixedWindow, request } from "../arcjet";
-
-const getBunny = () => ({
-  libraryId: getEnv("BUNNY_LIBRARY_ID"),
-  streamUrl: BUNNY.STREAM_BASE_URL,
-  storageUrl: BUNNY.STORAGE_BASE_URL,
-  cdnUrl: BUNNY.CDN_URL,
-  streamKey: getEnv("BUNNY_STREAM_ACCESS_KEY"),
-  storageKey: getEnv("BUNNY_STORAGE_ACCESS_KEY"),
-});
-
-const validateWithArcjet = async (fingerPrint: string) => {
-  const rateLimit = aj.withRule(
-    fixedWindow({ mode: "LIVE", window: "1m", max: 5, characteristics: ["fingerprint"] })
-  );
-  const req = await request();
-  const decision = await rateLimit.protect(req, { fingerprint: fingerPrint });
-  if (decision.isDenied()) throw new Error("Rate limit exceeded");
-};
+import { doesContentMatch, getOrderByClause } from "@/lib/utils";
+import { getSignedUploadParams, deleteCloudinaryResource } from "@/lib/cloudinary";
+import { SHARE_TOKEN_EXPIRY_DAYS } from "@/constants";
+import { analyzeVideoContent } from "@/lib/gemini";
 
 const revalidatePaths = (paths: string[]) =>
   paths.forEach((path) => revalidatePath(path));
@@ -51,41 +33,18 @@ const buildVideoWithUserQuery = () =>
 
 export const getVideoUploadUrl = withError(async () => {
   await getSessionUserId();
-  const b = getBunny();
-  const videoResponse = await apiFetch<BunnyVideoResponse>(
-    `${b.streamUrl}/${b.libraryId}/videos`,
-    { method: "POST", bunnyType: "stream", body: { title: "Temp Title", collectionId: "" } }
-  );
-  return {
-    videoId: videoResponse.guid,
-    uploadUrl: `${b.streamUrl}/${b.libraryId}/videos/${videoResponse.guid}`,
-    accessKey: b.streamKey,
-  };
+  const videoId = crypto.randomUUID();
+  const params = getSignedUploadParams("snapcast/videos", videoId, "video");
+  return { videoId, ...params };
 });
 
 export const getThumbnailUploadUrl = withError(async (videoId: string) => {
-  const b = getBunny();
-  const timestampedFileName = `${Date.now()}-${videoId}-thumbnail`;
-  return {
-    uploadUrl: `${b.storageUrl}/thumbnails/${timestampedFileName}`,
-    cdnUrl: `${b.cdnUrl}/thumbnails/${timestampedFileName}`,
-    accessKey: b.storageKey,
-  };
+  await getSessionUserId();
+  return getSignedUploadParams("snapcast/thumbnails", videoId, "image");
 });
 
 export const saveVideoDetails = withError(async (videoDetails: VideoDetails) => {
   const userId = await getSessionUserId();
-  await validateWithArcjet(userId);
-  const b = getBunny();
-
-  await apiFetch(
-    `${b.streamUrl}/${b.libraryId}/videos/${videoDetails.videoId}`,
-    {
-      method: "POST",
-      bunnyType: "stream",
-      body: { title: videoDetails.title, description: videoDetails.description },
-    }
-  );
 
   const tagsArray =
     typeof videoDetails.tags === "string"
@@ -97,11 +56,11 @@ export const saveVideoDetails = withError(async (videoDetails: VideoDetails) => 
     title: videoDetails.title,
     description: videoDetails.description,
     videoId: videoDetails.videoId,
+    videoUrl: videoDetails.videoUrl,
     thumbnailUrl: videoDetails.thumbnailUrl,
     visibility: videoDetails.visibility,
     duration: videoDetails.duration ?? null,
     tags: tagsArray,
-    videoUrl: `${BUNNY.EMBED_URL}/${b.libraryId}/${videoDetails.videoId}`,
     userId,
     createdAt: now,
     updatedAt: now,
@@ -216,48 +175,29 @@ export const incrementVideoViews = withError(async (videoId: string) => {
   return {};
 });
 
-// ─── Processing & AI ───────────────────────────────────────────────────────
-
-export const getVideoProcessingStatus = withError(async (videoId: string) => {
-  const b = getBunny();
-  const processingInfo = await apiFetch<BunnyVideoResponse>(
-    `${b.streamUrl}/${b.libraryId}/videos/${videoId}`,
-    { bunnyType: "stream" }
-  );
-  return {
-    isProcessed: processingInfo.status === 4,
-    encodingProgress: processingInfo.encodeProgress || 0,
-    status: processingInfo.status,
-  };
-});
-
-export const getTranscript = withError(async (videoId: string) => {
-  if (!BUNNY.TRANSCRIPT_URL) return null;
-  const response = await fetch(
-    `${BUNNY.TRANSCRIPT_URL}/${videoId}/captions/en-auto.vtt`
-  );
-  if (!response.ok) return null;
-  return response.text();
-});
+// ─── AI Processing ─────────────────────────────────────────────────────────
 
 export const processVideoAI = withError(async (videoId: string) => {
   const [existing] = await db
-    .select({ aiSummary: videos.aiSummary, transcript: videos.transcript })
+    .select()
     .from(videos)
     .where(eq(videos.videoId, videoId));
 
   if (existing?.aiSummary) return { alreadyProcessed: true };
 
-  const transcriptVtt = await getTranscript(videoId);
-  const transcriptText = transcriptVtt ? parseVttToText(transcriptVtt) : null;
-  const aiResult = transcriptText ? await analyzeTranscript(transcriptText) : null;
+  // Build context from available data (transcript if present, otherwise title/description)
+  const transcript = existing?.transcript?.trim();
+  const context = transcript
+    ? transcript
+    : `Title: ${existing?.title ?? ""}\nDescription: ${existing?.description ?? ""}\nTags: ${(existing?.tags ?? []).join(", ")}`;
+
+  const aiResult = await analyzeVideoContent(context);
 
   await db
     .update(videos)
     .set({
-      transcript: transcriptText,
       aiSummary: aiResult?.summary ?? null,
-      tags: aiResult?.tags ?? [],
+      tags: aiResult?.tags?.length ? aiResult.tags : (existing?.tags ?? []),
       updatedAt: new Date(),
     })
     .where(eq(videos.videoId, videoId));
@@ -266,18 +206,15 @@ export const processVideoAI = withError(async (videoId: string) => {
   return { processed: true };
 });
 
-function parseVttToText(vtt: string): string {
-  return vtt
-    .replace(/^WEBVTT.*$/m, "")
-    .replace(/\d{2}:\d{2}:\d{2}\.\d{3}\s-->\s\d{2}:\d{2}:\d{2}\.\d{3}/g, "")
-    .replace(/^\d+$/gm, "")
-    .replace(/<[^>]+>/g, "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-}
+export const saveTranscript = withError(async (videoId: string, transcript: string) => {
+  const userId = await getSessionUserId();
+  await db
+    .update(videos)
+    .set({ transcript, updatedAt: new Date() })
+    .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
+  revalidatePaths([`/video/${videoId}`]);
+  return {};
+});
 
 // ─── Visibility & Delete ────────────────────────────────────────────────────
 
@@ -293,32 +230,19 @@ export const updateVideoVisibility = withError(
   }
 );
 
-export const deleteVideo = withError(
-  async (videoId: string, thumbnailUrl: string) => {
-    const userId = await getSessionUserId();
-    const b = getBunny();
+export const deleteVideo = withError(async (videoId: string) => {
+  const userId = await getSessionUserId();
 
-    await apiFetch(
-      `${b.streamUrl}/${b.libraryId}/videos/${videoId}`,
-      { method: "DELETE", bunnyType: "stream" }
-    );
+  await deleteCloudinaryResource(`snapcast/videos/${videoId}`, "video").catch(() => {});
+  await deleteCloudinaryResource(`snapcast/thumbnails/${videoId}`, "image").catch(() => {});
 
-    if (thumbnailUrl.includes("thumbnails/")) {
-      const thumbnailPath = thumbnailUrl.split("thumbnails/")[1];
-      await apiFetch(
-        `${b.storageUrl}/thumbnails/${thumbnailPath}`,
-        { method: "DELETE", bunnyType: "storage", expectJson: false }
-      ).catch(() => {});
-    }
+  await db
+    .delete(videos)
+    .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
 
-    await db
-      .delete(videos)
-      .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
-
-    revalidatePaths(["/", `/video/${videoId}`]);
-    return {};
-  }
-);
+  revalidatePaths(["/", `/video/${videoId}`]);
+  return {};
+});
 
 // ─── Share Tokens ───────────────────────────────────────────────────────────
 

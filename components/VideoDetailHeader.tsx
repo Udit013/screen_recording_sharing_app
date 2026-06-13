@@ -39,7 +39,7 @@ const VideoDetailHeader = ({
     if (!confirm("Delete this video? This cannot be undone.")) return;
     setIsDeleting(true);
     try {
-      await deleteVideo(videoId, thumbnailUrl);
+      await deleteVideo(videoId);
       router.push("/");
     } catch (error) {
       console.error("Error deleting video:", error);

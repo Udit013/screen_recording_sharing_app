@@ -13,19 +13,19 @@ export interface AiVideoAnalysis {
   tags: string[];
 }
 
-export async function analyzeTranscript(
-  transcript: string
+export async function analyzeVideoContent(
+  context: string
 ): Promise<AiVideoAnalysis | null> {
   const genAI = getClient();
-  if (!genAI || !transcript.trim()) return null;
+  if (!genAI || !context.trim()) return null;
 
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    const prompt = `Analyze this video transcript and respond with ONLY valid JSON (no markdown, no code blocks).
+    const prompt = `Analyze this video content and respond with ONLY valid JSON (no markdown, no code blocks).
 
-Transcript:
-${transcript.slice(0, 8000)}
+Content:
+${context.slice(0, 8000)}
 
 Respond with exactly this JSON structure:
 {

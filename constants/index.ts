@@ -1,14 +1,6 @@
 export const MAX_VIDEO_SIZE = 500 * 1024 * 1024;
 export const MAX_THUMBNAIL_SIZE = 10 * 1024 * 1024;
 
-export const BUNNY = {
-  STREAM_BASE_URL: "https://video.bunnycdn.com/library",
-  STORAGE_BASE_URL: process.env.BUNNY_STORAGE_ZONE_URL ?? "https://sg.storage.bunnycdn.com/snapcast",
-  CDN_URL: process.env.BUNNY_CDN_URL ?? "https://snapcast.b-cdn.net",
-  EMBED_URL: "https://iframe.mediadelivery.net/embed",
-  TRANSCRIPT_URL: process.env.BUNNY_TRANSCRIPT_BASE_URL ?? "",
-};
-
 export const emojis = ["😂", "😍", "👍"];
 
 export const filterOptions = [
@@ -29,11 +21,9 @@ export const ICONS = {
 export const initialVideoState = {
   isLoaded: false,
   hasIncrementedView: false,
-  isProcessing: true,
-  processingProgress: 0,
 };
 
-export const infos = ["transcript", "ai summary", "chapters", "metadata"];
+export const infos = ["ai summary", "chapters", "metadata"];
 
 export const DEFAULT_VIDEO_CONFIG = {
   width: { ideal: 1920 },

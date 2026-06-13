@@ -23,7 +23,7 @@ const VideoInfo = ({
   ownerId,
   onSeek,
 }: VideoInfoFullProps) => {
-  const [activeTab, setActiveTab] = useState("transcript");
+  const [activeTab, setActiveTab] = useState("ai summary");
   const parsedTranscript = parseTranscript(transcript ?? "");
 
   const metaDatas = [

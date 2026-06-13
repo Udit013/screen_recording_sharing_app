@@ -1,9 +1,10 @@
 "use client";
 
-import { redirect, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { VideoDetailHeader, VideoInfo, VideoPlayer } from "@/components";
 import { getVideoById, processVideoAI } from "@/lib/actions/video";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { VideoPlayerHandle } from "@/components/VideoPlayer";
 
 type PageProps = {
   params: Promise<{ videoId: string }>;
@@ -13,8 +14,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
   const router = useRouter();
   const [videoId, setVideoId] = useState<string | null>(null);
   const [videoData, setVideoData] = useState<VideoWithUserResult | null>(null);
-  const [seekTarget, setSeekTarget] = useState<number | undefined>(undefined);
-  const playerRef = useRef<{ seekTo?: (s: number) => void }>({});
+  const playerRef = useRef<VideoPlayerHandle>(null);
   const aiTriggered = useRef(false);
 
   useEffect(() => {
@@ -29,12 +29,11 @@ const VideoDetailPage = ({ params }: PageProps) => {
     });
   }, [videoId, router]);
 
-  const handleVideoProcessed = useCallback(async () => {
+  const handleVideoReady = useCallback(async () => {
     if (!videoId || aiTriggered.current) return;
     aiTriggered.current = true;
     try {
       await processVideoAI(videoId);
-      // Refresh video data to show AI summary
       const updated = await getVideoById(videoId);
       if (updated) setVideoData(updated as VideoWithUserResult);
     } catch (e) {
@@ -71,8 +70,9 @@ const VideoDetailPage = ({ params }: PageProps) => {
       <section className="video-details">
         <div className="content">
           <VideoPlayer
-            videoId={video.videoId}
-            onProcessed={handleVideoProcessed}
+            ref={playerRef}
+            videoUrl={video.videoUrl}
+            onReady={handleVideoReady}
           />
         </div>
 
@@ -87,13 +87,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
           videoId={video.videoId}
           videoUrl={video.videoUrl}
           ownerId={video.userId}
-          onSeek={(seconds) => {
-            const container = document.getElementById("video-player-container");
-            const iframe = container?.querySelector("iframe");
-            if (iframe) {
-              iframe.src = `${iframe.src.split("?")[0]}?autoplay=true&preload=true&t=${seconds}`;
-            }
-          }}
+          onSeek={(seconds) => playerRef.current?.seekTo(seconds)}
         />
       </section>
     </main>

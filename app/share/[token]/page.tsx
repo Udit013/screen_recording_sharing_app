@@ -2,8 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
 import { getVideoByShareToken } from "@/lib/actions/video";
-import { VideoPlayer } from "@/components";
-import { daysAgo, formatDuration, createIframeLink } from "@/lib/utils";
+import { daysAgo, formatDuration } from "@/lib/utils";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -64,14 +63,12 @@ const SharePage = async ({ params }: SharePageProps) => {
           </p>
         </div>
 
-        <div className="video-player aspect-video w-full rounded-2xl bg-black">
-          <iframe
-            src={createIframeLink(video.videoId)}
-            className="w-full h-full rounded-2xl"
-            style={{ border: 0 }}
-            allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen"
-            allowFullScreen
-            title={video.title}
+        <div className="video-player aspect-video w-full rounded-2xl bg-black overflow-hidden">
+          <video
+            src={video.videoUrl}
+            controls
+            preload="metadata"
+            style={{ width: "100%", height: "100%" }}
           />
         </div>
 

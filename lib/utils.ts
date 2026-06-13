@@ -30,63 +30,6 @@ export const getEnv = (key: string): string => {
   return value;
 };
 
-export const apiFetch = async <T = Record<string, unknown>>(
-  url: string,
-  options: Omit<ApiFetchOptions, "bunnyType"> & {
-    bunnyType: "stream" | "storage";
-  }
-): Promise<T> => {
-  const {
-    method = "GET",
-    headers = {},
-    body,
-    expectJson = true,
-    bunnyType,
-  } = options;
-
-  const key = getEnv(
-    bunnyType === "stream"
-      ? "BUNNY_STREAM_ACCESS_KEY"
-      : "BUNNY_STORAGE_ACCESS_KEY"
-  );
-
-  const requestHeaders: Record<string, string> = {
-    ...headers,
-    AccessKey: key,
-    ...(bunnyType === "stream" && {
-      accept: "application/json",
-      ...(body && { "content-type": "application/json" }),
-    }),
-  };
-
-  const requestOptions: RequestInit = {
-    method,
-    headers: requestHeaders,
-    ...(body && { body: JSON.stringify(body) }),
-  };
-
-  const response = await fetch(url, requestOptions);
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => response.statusText);
-    throw new Error(`API error ${response.status}: ${errText}`);
-  }
-
-  if (method === "DELETE" || !expectJson) {
-    return true as T;
-  }
-
-  return response.json() as Promise<T>;
-};
-
-export const withErrorHandling = <T, A extends unknown[]>(
-  fn: (...args: A) => Promise<T>
-) => {
-  return async (...args: A): Promise<T> => {
-    return fn(...args);
-  };
-};
-
 export const getOrderByClause = (filter?: string) => {
   switch (filter) {
     case "Most Viewed":
@@ -237,6 +180,36 @@ export const createRecordingBlob = (
 export const calculateRecordingDuration = (startTime: number | null): number =>
   startTime ? Math.round((Date.now() - startTime) / 1000) : 0;
 
+export function daysAgo(inputDate: Date): string {
+  const input = new Date(inputDate);
+  const now = new Date();
+  const diffTime = now.getTime() - input.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays <= 0) return "Today";
+  if (diffDays === 1) return "1 day ago";
+  return `${diffDays} days ago`;
+}
+
+export const formatDuration = (seconds: number | null): string => {
+  if (!seconds || seconds <= 0) return "";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+};
+
+export const doesContentMatch = (searchQuery: string) =>
+  or(
+    ilike(
+      sql`REPLACE(REPLACE(REPLACE(LOWER(${videos.title}), '-', ''), '.', ''), ' ', '')`,
+      `%${searchQuery.replace(/[-. ]/g, "").toLowerCase()}%`
+    ),
+    ilike(videos.transcript, `%${searchQuery}%`),
+    ilike(videos.aiSummary, `%${searchQuery}%`)
+  );
+
 export function parseTranscript(transcript: string): TranscriptEntry[] {
   const lines = transcript.replace(/^WEBVTT\s*/, "").split("\n");
   const result: TranscriptEntry[] = [];
@@ -272,39 +245,3 @@ export function parseTranscript(transcript: string): TranscriptEntry[] {
 
   return result;
 }
-
-export function daysAgo(inputDate: Date): string {
-  const input = new Date(inputDate);
-  const now = new Date();
-  const diffTime = now.getTime() - input.getTime();
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-
-  if (diffDays <= 0) return "Today";
-  if (diffDays === 1) return "1 day ago";
-  return `${diffDays} days ago`;
-}
-
-export const formatDuration = (seconds: number | null): string => {
-  if (!seconds || seconds <= 0) return "";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-};
-
-export const createIframeLink = (videoId: string, startTime?: number) => {
-  const libraryId = process.env.NEXT_PUBLIC_BUNNY_LIBRARY_ID;
-  const base = `https://iframe.mediadelivery.net/embed/${libraryId}/${videoId}?autoplay=true&preload=true`;
-  return startTime ? `${base}&t=${startTime}` : base;
-};
-
-export const doesContentMatch = (searchQuery: string) =>
-  or(
-    ilike(
-      sql`REPLACE(REPLACE(REPLACE(LOWER(${videos.title}), '-', ''), '.', ''), ' ', '')`,
-      `%${searchQuery.replace(/[-. ]/g, "").toLowerCase()}%`
-    ),
-    ilike(videos.transcript, `%${searchQuery}%`),
-    ilike(videos.aiSummary, `%${searchQuery}%`)
-  );

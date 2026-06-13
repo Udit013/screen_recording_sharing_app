@@ -11,22 +11,45 @@ import { FileInput, FormField } from "@/components";
 import { useFileInput } from "@/lib/hooks/useFileInput";
 import { MAX_THUMBNAIL_SIZE, MAX_VIDEO_SIZE } from "@/constants";
 
-const uploadFileToBunny = (
+interface CloudinaryUploadParams {
+  uploadUrl: string;
+  publicId: string;
+  signature: string;
+  timestamp: number;
+  apiKey: string;
+  cloudName: string;
+  resourceType: string;
+}
+
+interface CloudinaryUploadResult {
+  secure_url: string;
+  public_id: string;
+  duration?: number;
+}
+
+const uploadToCloudinary = async (
   file: File,
-  uploadUrl: string,
-  accessKey: string
-): Promise<void> =>
-  fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type, AccessKey: accessKey },
-    body: file,
-  }).then((res) => {
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-  });
+  params: CloudinaryUploadParams
+): Promise<CloudinaryUploadResult> => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("api_key", params.apiKey);
+  form.append("timestamp", params.timestamp.toString());
+  form.append("signature", params.signature);
+  form.append("public_id", params.publicId);
+
+  const res = await fetch(params.uploadUrl, { method: "POST", body: form });
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.statusText);
+    throw new Error(`Cloudinary upload failed: ${err}`);
+  }
+  return res.json() as Promise<CloudinaryUploadResult>;
+};
 
 const UploadPage = () => {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [formData, setFormData] = useState<VideoFormValues>({
@@ -54,9 +77,9 @@ const UploadPage = () => {
         type: string;
         size: number;
         duration: number;
+        transcript?: string;
       };
 
-      // Keep the blob URL alive — don't revoke until component unmounts
       fetch(parsed.url)
         .then((res) => res.blob())
         .then((blob) => {
@@ -83,6 +106,7 @@ const UploadPage = () => {
           console.error("Error loading recorded video:", err);
           sessionStorage.removeItem("recordedVideo");
         });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     } catch (err) {
       console.error("Error parsing stored video:", err);
       sessionStorage.removeItem("recordedVideo");
@@ -112,33 +136,27 @@ const UploadPage = () => {
 
     setIsSubmitting(true);
     try {
-      const { videoId, uploadUrl: videoUploadUrl, accessKey: videoAccessKey } =
-        await getVideoUploadUrl();
+      setUploadProgress("Getting upload credentials…");
+      const { videoId, ...videoUploadParams } = await getVideoUploadUrl();
+      if (!videoId) throw new Error("Failed to get video upload credentials");
 
-      if (!videoUploadUrl || !videoAccessKey)
-        throw new Error("Failed to get video upload credentials");
+      setUploadProgress("Uploading video… (this may take a moment)");
+      const videoResult = await uploadToCloudinary(video.file, videoUploadParams as CloudinaryUploadParams);
 
-      await uploadFileToBunny(video.file, videoUploadUrl, videoAccessKey);
+      setUploadProgress("Uploading thumbnail…");
+      const thumbParams = await getThumbnailUploadUrl(videoId);
+      const thumbResult = await uploadToCloudinary(thumbnail.file, thumbParams as CloudinaryUploadParams);
 
-      const {
-        uploadUrl: thumbnailUploadUrl,
-        cdnUrl: thumbnailCdnUrl,
-        accessKey: thumbnailAccessKey,
-      } = await getThumbnailUploadUrl(videoId);
-
-      if (!thumbnailUploadUrl || !thumbnailCdnUrl || !thumbnailAccessKey)
-        throw new Error("Failed to get thumbnail upload credentials");
-
-      await uploadFileToBunny(thumbnail.file, thumbnailUploadUrl, thumbnailAccessKey);
-
+      setUploadProgress("Saving video details…");
       await saveVideoDetails({
         videoId,
-        thumbnailUrl: thumbnailCdnUrl,
+        videoUrl: videoResult.secure_url,
+        thumbnailUrl: thumbResult.secure_url,
         title: formData.title.trim(),
         description: formData.description.trim(),
         tags: formData.tags,
         visibility: formData.visibility,
-        duration: videoDuration,
+        duration: videoDuration ?? (videoResult.duration ? Math.round(videoResult.duration) : null),
       });
 
       router.push(`/video/${videoId}`);
@@ -147,6 +165,7 @@ const UploadPage = () => {
       setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
     } finally {
       setIsSubmitting(false);
+      setUploadProgress("");
     }
   };
 
@@ -223,7 +242,7 @@ const UploadPage = () => {
         />
 
         <button type="submit" disabled={isSubmitting} className="submit-button">
-          {isSubmitting ? "Uploading…" : "Upload Video"}
+          {isSubmitting ? (uploadProgress || "Uploading…") : "Upload Video"}
         </button>
       </form>
     </main>
