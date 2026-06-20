@@ -91,7 +91,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           onCanPlay={handleCanPlay}
           onTimeUpdate={handleTimeUpdate}
           onEnded={flushWatch}
-          style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
         />
       </div>
     );

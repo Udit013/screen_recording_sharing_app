@@ -595,7 +595,7 @@
 
   /* video player */
   .video-player {
-    @apply relative aspect-video w-full rounded-2xl bg-[#000] flex-none;
+    @apply relative aspect-video w-full rounded-2xl bg-[#000] flex-none overflow-hidden;
 
     div {
       @apply absolute inset-0 flex items-center justify-center bg-gray-900 rounded-2xl;
@@ -607,6 +607,10 @@
 
     iframe {
       @apply absolute inset-0 h-full w-full rounded-2xl;
+    }
+
+    video {
+      @apply absolute inset-0 h-full w-full rounded-2xl object-contain bg-[#000];
     }
   }
 

@@ -64,12 +64,7 @@ const SharePage = async ({ params }: SharePageProps) => {
         </div>
 
         <div className="video-player aspect-video w-full rounded-2xl bg-black overflow-hidden">
-          <video
-            src={video.videoUrl}
-            controls
-            preload="metadata"
-            style={{ width: "100%", height: "100%" }}
-          />
+          <video src={video.videoUrl} controls preload="metadata" />
         </div>
 
         {video.description && (
