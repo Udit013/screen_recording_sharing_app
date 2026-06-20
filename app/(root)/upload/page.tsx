@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, FormEvent, ChangeEvent, useEffect } from "react";
+import { useState, FormEvent, ChangeEvent, useEffect, useRef } from "react";
 import {
   getVideoUploadUrl,
   getThumbnailUploadUrl,
   saveVideoDetails,
+  saveVideoTranscript,
 } from "@/lib/actions/video";
 import { useRouter } from "next/navigation";
 import { FileInput, FormField } from "@/components";
@@ -61,6 +62,7 @@ const UploadPage = () => {
 
   const video = useFileInput(MAX_VIDEO_SIZE);
   const thumbnail = useFileInput(MAX_THUMBNAIL_SIZE);
+  const transcriptRef = useRef<TranscriptEntry[]>([]);
 
   useEffect(() => {
     if (video.duration !== null) setVideoDuration(video.duration);
@@ -77,8 +79,10 @@ const UploadPage = () => {
         type: string;
         size: number;
         duration: number;
-        transcript?: string;
+        transcriptSegments?: TranscriptEntry[];
       };
+
+      transcriptRef.current = parsed.transcriptSegments ?? [];
 
       fetch(parsed.url)
         .then((res) => res.blob())
@@ -158,6 +162,11 @@ const UploadPage = () => {
         visibility: formData.visibility,
         duration: videoDuration ?? (videoResult.duration ? Math.round(videoResult.duration) : null),
       });
+
+      // Persist the captured narration transcript (powers search + AI chapters).
+      if (transcriptRef.current.length > 0) {
+        await saveVideoTranscript(videoId, transcriptRef.current).catch(() => {});
+      }
 
       router.push(`/video/${videoId}`);
     } catch (err) {

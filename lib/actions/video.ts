@@ -9,7 +9,7 @@ import { auth } from "@/lib/auth";
 import { doesContentMatch, getOrderByClause } from "@/lib/utils";
 import { getSignedUploadParams, deleteCloudinaryResource } from "@/lib/cloudinary";
 import { SHARE_TOKEN_EXPIRY_DAYS } from "@/constants";
-import { analyzeVideoContent } from "@/lib/gemini";
+import { analyzeVideoContent, generateChapters } from "@/lib/gemini";
 
 const revalidatePaths = (paths: string[]) =>
   paths.forEach((path) => revalidatePath(path));
@@ -183,38 +183,93 @@ export const processVideoAI = withError(async (videoId: string) => {
     .from(videos)
     .where(eq(videos.videoId, videoId));
 
-  if (existing?.aiSummary) return { alreadyProcessed: true };
-
-  // Build context from available data (transcript if present, otherwise title/description)
-  const transcript = existing?.transcript?.trim();
-  const context = transcript
-    ? transcript
-    : `Title: ${existing?.title ?? ""}\nDescription: ${existing?.description ?? ""}\nTags: ${(existing?.tags ?? []).join(", ")}`;
-
-  const aiResult = await analyzeVideoContent(context);
+  if (!existing) return { processed: false };
+  if (existing.aiSummary && existing.processingStatus === "ready") {
+    return { alreadyProcessed: true };
+  }
 
   await db
     .update(videos)
-    .set({
-      aiSummary: aiResult?.summary ?? null,
-      tags: aiResult?.tags?.length ? aiResult.tags : (existing?.tags ?? []),
-      updatedAt: new Date(),
-    })
+    .set({ processingStatus: "processing", updatedAt: new Date() })
     .where(eq(videos.videoId, videoId));
 
-  revalidatePaths([`/video/${videoId}`]);
-  return { processed: true };
+  try {
+    // Build context: prefer transcript, else fall back to title/description/tags
+    const transcript = existing.transcript?.trim();
+    const context = transcript
+      ? transcript
+      : `Title: ${existing.title}\nDescription: ${existing.description}\nTags: ${(existing.tags ?? []).join(", ")}`;
+
+    const aiResult = await analyzeVideoContent(context);
+
+    // Generate AI chapters from the timed transcript when available and the
+    // owner hasn't already added manual chapters.
+    let aiChapters: Chapter[] | null = null;
+    const segments = existing.transcriptSegments ?? [];
+    const hasManualChapters = (existing.chapters?.length ?? 0) > 0;
+    if (!hasManualChapters && segments.length > 0) {
+      const timed = segments
+        .map((s) => `[${vttTimeToSeconds(s.time)}] ${s.text}`)
+        .join("\n");
+      aiChapters = await generateChapters(timed, existing.duration ?? 0);
+    }
+
+    await db
+      .update(videos)
+      .set({
+        aiSummary: aiResult?.summary ?? existing.aiSummary ?? null,
+        tags: aiResult?.tags?.length ? aiResult.tags : (existing.tags ?? []),
+        chapters: aiChapters ?? existing.chapters ?? [],
+        processingStatus: "ready",
+        updatedAt: new Date(),
+      })
+      .where(eq(videos.videoId, videoId));
+
+    revalidatePaths([`/video/${videoId}`]);
+    return { processed: true };
+  } catch {
+    await db
+      .update(videos)
+      .set({ processingStatus: "failed", updatedAt: new Date() })
+      .where(eq(videos.videoId, videoId));
+    return { processed: false };
+  }
 });
 
-export const saveTranscript = withError(async (videoId: string, transcript: string) => {
-  const userId = await getSessionUserId();
-  await db
-    .update(videos)
-    .set({ transcript, updatedAt: new Date() })
-    .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
-  revalidatePaths([`/video/${videoId}`]);
-  return {};
-});
+/**
+ * Stores a timed transcript captured client-side (Web Speech API) during
+ * recording. Saves both the structured segments and a flattened text blob
+ * (used for keyword search and AI context).
+ */
+export const saveVideoTranscript = withError(
+  async (videoId: string, segments: TranscriptEntry[]) => {
+    const userId = await getSessionUserId();
+    const clean = (segments ?? [])
+      .filter((s) => s && typeof s.text === "string" && s.text.trim())
+      .map((s) => ({ time: s.time, text: s.text.trim() }));
+    const flatText = clean.map((s) => s.text).join(" ");
+
+    await db
+      .update(videos)
+      .set({
+        transcript: flatText || null,
+        transcriptSegments: clean,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
+    revalidatePaths([`/video/${videoId}`]);
+    return {};
+  }
+);
+
+// Converts a transcript "mm:ss" / "hh:mm:ss" stamp into integer seconds.
+function vttTimeToSeconds(time: string): number {
+  const parts = time.split(":").map(Number);
+  if (parts.some(isNaN)) return 0;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parts[0] ?? 0;
+}
 
 // ─── Visibility & Delete ────────────────────────────────────────────────────
 

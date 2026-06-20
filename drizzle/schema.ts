@@ -75,13 +75,77 @@ export const videos = pgTable("videos", {
   views: integer("views").notNull().default(0),
   duration: integer("duration"),
   transcript: text("transcript"),
+  transcriptSegments: jsonb("transcript_segments")
+    .$type<TranscriptEntry[]>()
+    .default([]),
   aiSummary: text("ai_summary"),
   tags: text("tags").array().default([]),
   shareToken: text("share_token").unique(),
   shareTokenExpiry: timestamp("share_token_expiry"),
   chapters: jsonb("chapters").$type<Chapter[]>().default([]),
+  // Async-ish processing status: idle | processing | ready | failed
+  processingStatus: text("processing_status")
+    .$type<"idle" | "processing" | "ready" | "failed">()
+    .notNull()
+    .default("idle"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ── Timestamped personal notes on a video ──────────────────────────────────
+export const notes = pgTable("notes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  videoId: text("video_id")
+    .notNull()
+    .references(() => videos.videoId, { onDelete: "cascade" }),
+  timestamp: integer("timestamp").notNull().default(0),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ── Playlists / Collections ────────────────────────────────────────────────
+export const playlists = pgTable("playlists", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const playlistVideos = pgTable("playlist_videos", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  playlistId: uuid("playlist_id")
+    .notNull()
+    .references(() => playlists.id, { onDelete: "cascade" }),
+  videoId: text("video_id")
+    .notNull()
+    .references(() => videos.videoId, { onDelete: "cascade" }),
+  position: integer("position").notNull().default(0),
+  addedAt: timestamp("added_at").notNull().defaultNow(),
+});
+
+// ── Per-view watch events (powers analytics) ───────────────────────────────
+export const videoViews = pgTable("video_views", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  videoId: text("video_id")
+    .notNull()
+    .references(() => videos.videoId, { onDelete: "cascade" }),
+  // nullable: anonymous viewers via share links have no account
+  viewerId: text("viewer_id").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  // anonymous fingerprint (session id) for unique-viewer counting
+  anonId: text("anon_id"),
+  watchedSeconds: integer("watched_seconds").notNull().default(0),
+  completed: boolean("completed").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const schema = {
@@ -90,4 +154,8 @@ export const schema = {
   account,
   verification,
   videos,
+  notes,
+  playlists,
+  playlistVideos,
+  videoViews,
 };

@@ -16,6 +16,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
   const [videoData, setVideoData] = useState<VideoWithUserResult | null>(null);
   const playerRef = useRef<VideoPlayerHandle>(null);
   const aiTriggered = useRef(false);
+  const [aiRunning, setAiRunning] = useState(false);
 
   useEffect(() => {
     params.then(({ videoId: id }) => setVideoId(id));
@@ -32,14 +33,18 @@ const VideoDetailPage = ({ params }: PageProps) => {
   const handleVideoReady = useCallback(async () => {
     if (!videoId || aiTriggered.current) return;
     aiTriggered.current = true;
+    if (videoData?.video.processingStatus === "ready") return;
+    setAiRunning(true);
     try {
       await processVideoAI(videoId);
       const updated = await getVideoById(videoId);
       if (updated) setVideoData(updated as VideoWithUserResult);
     } catch (e) {
       console.error("AI processing error:", e);
+    } finally {
+      setAiRunning(false);
     }
-  }, [videoId]);
+  }, [videoId, videoData?.video.processingStatus]);
 
   if (!videoData) {
     return (
@@ -67,11 +72,19 @@ const VideoDetailPage = ({ params }: PageProps) => {
         shareToken={video.shareToken}
       />
 
+      {aiRunning && (
+        <div className="processing-pill">
+          <span className="processing-dot" />
+          Generating AI summary & chapters…
+        </div>
+      )}
+
       <section className="video-details">
         <div className="content">
           <VideoPlayer
             ref={playerRef}
             videoUrl={video.videoUrl}
+            videoId={video.videoId}
             onReady={handleVideoReady}
           />
         </div>
@@ -88,6 +101,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
           videoUrl={video.videoUrl}
           ownerId={video.userId}
           onSeek={(seconds) => playerRef.current?.seekTo(seconds)}
+          getCurrentTime={() => playerRef.current?.getCurrentTime() ?? 0}
         />
       </section>
     </main>

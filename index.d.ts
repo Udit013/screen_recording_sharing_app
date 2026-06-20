@@ -145,11 +145,13 @@ declare global {
       visibility: Visibility;
       duration: number | null;
       transcript: string | null;
+      transcriptSegments: TranscriptEntry[] | null;
       aiSummary: string | null;
       tags: string[] | null;
       shareToken: string | null;
       shareTokenExpiry: Date | null;
       chapters: Chapter[] | null;
+      processingStatus: ProcessingStatus;
       createdAt: Date;
       updatedAt: Date;
     };
@@ -204,6 +206,7 @@ declare global {
     recordedBlob: Blob | null;
     recordedVideoUrl: string;
     recordingDuration: number;
+    transcriptSegments: TranscriptEntry[];
   }
 
   interface ExtendedMediaStream extends MediaStream {
@@ -229,6 +232,62 @@ declare global {
     apiKey: string;
     cloudName: string;
     resourceType: "video" | "image";
+  }
+
+  type ProcessingStatus = "idle" | "processing" | "ready" | "failed";
+
+  interface Note {
+    id: string;
+    userId: string;
+    videoId: string;
+    timestamp: number;
+    content: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  interface Playlist {
+    id: string;
+    userId: string;
+    name: string;
+    description: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  interface PlaylistWithCount extends Playlist {
+    videoCount: number;
+  }
+
+  interface PlaylistVideoItem {
+    id: string;
+    videoId: string;
+    title: string;
+    thumbnailUrl: string;
+    duration: number | null;
+    position: number;
+  }
+
+  interface VideoAnalytics {
+    totalViews: number;
+    uniqueViewers: number;
+    totalWatchSeconds: number;
+    avgWatchSeconds: number;
+    completionRate: number; // 0..1
+  }
+
+  interface ChannelAnalytics {
+    totalVideos: number;
+    totalViews: number;
+    uniqueViewers: number;
+    totalWatchSeconds: number;
+    avgCompletionRate: number; // 0..1
+    topVideos: Array<{
+      videoId: string;
+      title: string;
+      thumbnailUrl: string;
+      views: number;
+    }>;
   }
 }
 

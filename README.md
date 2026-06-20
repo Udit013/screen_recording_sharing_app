@@ -23,9 +23,33 @@
 | **Smart Search** | Full-text search across titles, transcripts, and AI summaries |
 | **Privacy Controls** | Public / Private / Link-only visibility per video |
 | **Shareable Links** | Time-limited share tokens (7-day expiry) with revocation |
-| **Video Chapters** | Owner can add clickable chapter timestamps |
-| **View Analytics** | View count tracked per video |
+| **AI Chapters** | Gemini auto-generates chapters from the transcript; owner can edit/delete |
+| **Auto Transcript** | Web Speech API captures timestamped narration during recording |
+| **Timestamped Notes** | Private, per-user notes pinned to moments; click to jump the player |
+| **Collections / Playlists** | Group videos into named collections (many-to-many) |
+| **Channel Analytics** | Unique viewers, watch time, completion rate, top videos |
+| **Privacy Controls** | Public / Private / Link-only visibility per video |
+| **Shareable Links** | Time-limited share tokens (7-day expiry) with revocation |
+| **Processing Status** | Live pill while AI summary & chapters are generated |
 | **Google OAuth** | One-click sign-in via better-auth |
+
+---
+
+## Architectural Decisions (v2 upgrade)
+
+The platform was upgraded with portfolio-grade features under strict free-tier
+constraints (Vercel Hobby, Neon free, Gemini free). Each candidate feature was
+evaluated for feasibility; the decisions:
+
+| Feature | Decision | Rationale |
+|---|---|---|
+| AI Chapters | **Implemented** | Gemini reads the timed transcript → validated JSON chapters; falls back to manual chapters on any failure |
+| Auto Transcript | **Implemented (Web Speech API)** | Browser-native, free, timestamped. Server-side transcription (Gemini Files API) would exceed Vercel Hobby's function timeout for large videos. Degrades gracefully on non-Chromium browsers |
+| Timestamped Notes | **Implemented** | Pure CRUD, owner-scoped, click-to-seek |
+| Playlists | **Implemented** | Many-to-many (`playlists` ↔ `playlist_videos`) with ownership guards |
+| Channel Analytics | **Implemented** | `video_views` event table → unique viewers, watch time, completion rate, top videos. Anonymous viewers tracked via a localStorage id |
+| Semantic search (pgvector) | **Deferred** | pgvector *is* available on Neon, but per-video embedding generation + a vector column via the HTTP driver adds write-path API cost and bug surface for marginal gain over existing keyword search (title + transcript + summary). Kept keyword search; documented as a clean future swap |
+| Background job queue + cron | **Deferred** | Vercel Hobby cron runs at most **once per day** — useless for processing UX. Processing stays client-triggered with a persisted `processingStatus` field and a live status pill, avoiding Redis/BullMQ/Kafka entirely |
 
 ---
 
@@ -73,16 +97,38 @@ videos (
   id uuid PK, video_id text UNIQUE,
   title text, description text,
   video_url text, thumbnail_url text,
-  visibility text,              -- public | private | link-only
+  visibility text,                 -- public | private | link-only
   transcript text,
+  transcript_segments jsonb,       -- [{time, text}] (timed)
   ai_summary text,
   tags text[],
-  chapters jsonb,               -- [{title, timestamp}]
+  chapters jsonb,                  -- [{title, timestamp}]
+  processing_status text,          -- idle | processing | ready | failed
   share_token text UNIQUE,
   share_token_expiry timestamp,
   views integer DEFAULT 0,
   duration integer,
   user_id text FK → user(id)
+)
+
+notes (
+  id uuid PK, user_id FK, video_id FK,
+  timestamp integer, content text, created_at, updated_at
+)
+
+playlists (
+  id uuid PK, user_id FK, name text, description text
+)
+
+playlist_videos (                  -- many-to-many
+  id uuid PK, playlist_id FK, video_id FK,
+  position integer, UNIQUE(playlist_id, video_id)
+)
+
+video_views (                      -- analytics events
+  id uuid PK, video_id FK,
+  viewer_id FK NULL, anon_id text, -- unique-viewer counting
+  watched_seconds integer, completed boolean
 )
 ```
 

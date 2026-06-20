@@ -1,9 +1,16 @@
 export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 
 import { getAllVideosByUser } from "@/lib/actions/video";
-import { EmptyState, SharedHeader, VideoCard } from "@/components";
+import { auth } from "@/lib/auth";
+import {
+  EmptyState,
+  SharedHeader,
+  VideoCard,
+  ChannelAnalyticsPanel,
+} from "@/components";
 
 const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
   const { id } = await params;
@@ -12,6 +19,9 @@ const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
   const { user, videos } = await getAllVideosByUser(id, query, filter);
   if (!user) redirect("/404");
 
+  const session = await auth.api.getSession({ headers: await headers() });
+  const isOwner = session?.user.id === id;
+
   return (
     <main className="wrapper page">
       <SharedHeader
@@ -19,6 +29,8 @@ const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
         title={user?.name}
         userImg={user?.image ?? ""}
       />
+
+      {isOwner && <ChannelAnalyticsPanel userId={id} />}
 
       {videos?.length > 0 ? (
         <section className="video-grid">

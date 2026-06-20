@@ -23,7 +23,7 @@ export const initialVideoState = {
   hasIncrementedView: false,
 };
 
-export const infos = ["ai summary", "chapters", "metadata"];
+export const infos = ["ai summary", "chapters", "notes", "metadata"];
 
 export const DEFAULT_VIDEO_CONFIG = {
   width: { ideal: 1920 },

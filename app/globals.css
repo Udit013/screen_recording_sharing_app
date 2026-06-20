@@ -817,3 +817,147 @@
     }
   }
 }
+
+/* ─── Advanced features: notes, playlists, analytics, processing ─────────── */
+
+/* Navbar collections link */
+.nav-collections-link {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #2c325d;
+  padding: 0.4rem 0.9rem;
+  border-radius: 9999px;
+  transition: background 0.2s, color 0.2s;
+}
+.nav-collections-link:hover { background: #ffeef5; color: #ff4393; }
+
+/* Processing pill */
+.processing-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #ffeef5;
+  color: #ff4393;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  border-radius: 9999px;
+  width: fit-content;
+  margin: 0.75rem 0;
+}
+.processing-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #ff4393; animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* Notes */
+.notes-container { display: flex; flex-direction: column; gap: 1rem; padding: 0.5rem 0; }
+.note-add { display: flex; flex-direction: column; gap: 0.5rem; }
+.note-input {
+  border: 1px solid rgba(108,102,133,0.2);
+  border-radius: 12px; padding: 0.6rem 0.9rem;
+  font-size: 0.9rem; resize: vertical; width: 100%;
+  color: #212121;
+}
+.note-input:focus { outline: 2px solid #ff4393; }
+.note-add-btn {
+  align-self: flex-start; background: #ff4393; color: #fff;
+  font-weight: 600; font-size: 0.85rem; padding: 0.5rem 1rem;
+  border-radius: 9999px; cursor: pointer;
+}
+.note-add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.notes-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.note-item {
+  display: flex; align-items: flex-start; gap: 0.75rem;
+  padding: 0.6rem 0.75rem; border: 1px solid rgba(108,102,133,0.15);
+  border-radius: 12px; background: #fff;
+}
+.note-time {
+  flex-shrink: 0; color: #ff4393; font-weight: 700; font-size: 0.8rem;
+  background: #ffeef5; padding: 0.2rem 0.5rem; border-radius: 6px; cursor: pointer;
+}
+.note-content { flex: 1; font-size: 0.9rem; color: #212121; line-height: 1.4; }
+.note-actions { display: flex; gap: 0.4rem; }
+.note-actions button { color: #6c6685; font-size: 1rem; cursor: pointer; padding: 0 0.2rem; }
+.note-actions button:hover { color: #ff4393; }
+.note-edit { flex: 1; display: flex; flex-direction: column; gap: 0.4rem; }
+.note-edit-actions { display: flex; gap: 0.5rem; }
+.note-save-btn { background: #ff4393; color: #fff; padding: 0.3rem 0.8rem; border-radius: 8px; font-size: 0.8rem; cursor: pointer; }
+.note-cancel-btn { color: #6c6685; padding: 0.3rem 0.8rem; font-size: 0.8rem; cursor: pointer; }
+
+/* Add to playlist dropdown */
+.add-to-playlist { position: relative; }
+.add-to-playlist-trigger {
+  background: #fff8fb; border: 1px solid rgba(108,102,133,0.2);
+  color: #2c325d; font-weight: 600; font-size: 0.85rem;
+  padding: 0.45rem 0.9rem; border-radius: 9999px; cursor: pointer;
+}
+.add-to-playlist-trigger:hover { background: #ffeef5; color: #ff4393; }
+.add-to-playlist-menu {
+  position: absolute; top: 110%; right: 0; z-index: 60;
+  background: #fff; border: 1px solid rgba(108,102,133,0.2);
+  border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  width: 240px; padding: 0.6rem;
+}
+.add-to-playlist-loading { font-size: 0.85rem; color: #6c6685; padding: 0.5rem; }
+.add-to-playlist-list { display: flex; flex-direction: column; gap: 0.2rem; max-height: 200px; overflow-y: auto; }
+.add-to-playlist-list label { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem; border-radius: 8px; cursor: pointer; font-size: 0.88rem; color: #212121; }
+.add-to-playlist-list label:hover { background: #ffeef5; }
+.add-to-playlist-create { display: flex; gap: 0.4rem; margin-top: 0.5rem; border-top: 1px solid rgba(108,102,133,0.15); padding-top: 0.6rem; }
+.add-to-playlist-create input { flex: 1; border: 1px solid rgba(108,102,133,0.2); border-radius: 8px; padding: 0.35rem 0.5rem; font-size: 0.82rem; }
+.add-to-playlist-create button { background: #ff4393; color: #fff; padding: 0.35rem 0.7rem; border-radius: 8px; font-size: 0.8rem; cursor: pointer; }
+.add-to-playlist-create button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Playlists pages */
+.playlists-page { display: flex; flex-direction: column; gap: 1.5rem; }
+.playlist-create-card {
+  background: #fff; border: 1px solid rgba(108,102,133,0.15);
+  border-radius: 16px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; max-width: 480px;
+}
+.playlist-create-card h2 { font-size: 1.05rem; font-weight: 700; color: #212121; }
+.playlist-input { border: 1px solid rgba(108,102,133,0.2); border-radius: 12px; padding: 0.6rem 0.9rem; font-size: 0.9rem; color: #212121; }
+.playlist-input:focus { outline: 2px solid #ff4393; }
+.playlist-create-btn { align-self: flex-start; background: #ff4393; color: #fff; font-weight: 600; padding: 0.55rem 1.2rem; border-radius: 9999px; cursor: pointer; font-size: 0.9rem; }
+.playlist-create-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.playlist-cancel-btn { color: #6c6685; font-weight: 600; padding: 0.55rem 1rem; cursor: pointer; font-size: 0.9rem; }
+.playlist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+.playlist-card { position: relative; background: #fff; border: 1px solid rgba(108,102,133,0.15); border-radius: 14px; padding: 1rem; transition: box-shadow 0.2s; }
+.playlist-card:hover { box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+.playlist-card-link { display: flex; flex-direction: column; gap: 0.4rem; }
+.playlist-card-link h3 { font-size: 1rem; font-weight: 700; color: #212121; }
+.playlist-desc { font-size: 0.82rem; color: #6c6685; }
+.playlist-count { font-size: 0.78rem; color: #ff4393; font-weight: 600; }
+.playlist-delete-btn { position: absolute; top: 0.6rem; right: 0.6rem; color: #6c6685; font-size: 1.2rem; cursor: pointer; line-height: 1; }
+.playlist-delete-btn:hover { color: #fe6247; }
+.playlist-delete-text-btn { color: #fe6247; font-weight: 600; padding: 0.55rem 1rem; cursor: pointer; font-size: 0.9rem; }
+
+/* Playlist detail */
+.playlist-detail { display: flex; flex-direction: column; gap: 1.25rem; }
+.playlist-detail-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.playlist-detail-header h1 { font-size: 1.6rem; font-weight: 800; color: #212121; }
+.playlist-detail-actions { display: flex; gap: 0.5rem; }
+.playlist-edit { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; max-width: 480px; }
+.playlist-edit-actions { display: flex; gap: 0.5rem; }
+.playlist-video-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.playlist-video-item { position: relative; display: flex; align-items: center; gap: 1rem; background: #fff; border: 1px solid rgba(108,102,133,0.15); border-radius: 12px; padding: 0.6rem; }
+.playlist-video-link { display: flex; align-items: center; gap: 1rem; flex: 1; }
+.playlist-video-thumb { border-radius: 8px; object-fit: cover; }
+.playlist-video-meta h3 { font-size: 0.95rem; font-weight: 600; color: #212121; }
+.playlist-video-meta span { font-size: 0.8rem; color: #6c6685; }
+
+/* Analytics panel */
+.analytics-panel { background: #fff; border: 1px solid rgba(108,102,133,0.15); border-radius: 16px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+.analytics-title { font-size: 1.1rem; font-weight: 700; color: #212121; }
+.analytics-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
+.analytics-card { background: #fff8fb; border: 1px solid rgba(108,102,133,0.12); border-radius: 12px; padding: 0.9rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.analytics-card-value { font-size: 1.5rem; font-weight: 800; color: #ff4393; }
+.analytics-card-label { font-size: 0.78rem; color: #6c6685; font-weight: 600; }
+.analytics-top h3 { font-size: 0.95rem; font-weight: 700; color: #212121; margin-bottom: 0.6rem; }
+.analytics-bars { display: flex; flex-direction: column; gap: 0.5rem; }
+.analytics-bar-row { display: flex; align-items: center; gap: 0.75rem; }
+.analytics-bar-label { flex: 0 0 30%; font-size: 0.82rem; color: #212121; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.analytics-bar-label:hover { color: #ff4393; }
+.analytics-bar-track { flex: 1; background: #ffeef5; border-radius: 9999px; height: 14px; overflow: hidden; }
+.analytics-bar-fill { height: 100%; background: #ff4393; border-radius: 9999px; min-width: 2px; }
+.analytics-bar-value { flex: 0 0 auto; font-size: 0.8rem; font-weight: 600; color: #6c6685; }

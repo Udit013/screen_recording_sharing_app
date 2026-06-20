@@ -34,6 +34,12 @@ const Navbar = () => {
 
         {user && (
           <figure>
+            <button
+              onClick={() => router.push("/playlists")}
+              className="nav-collections-link"
+            >
+              Collections
+            </button>
             <button onClick={() => router.push(`/profile/${session?.user.id}`)}>
               <ImageWithFallback
                 src={session?.user.image ?? ""}

@@ -9,6 +9,7 @@ import { authClient } from "@/lib/auth-client";
 import { visibilities } from "@/constants";
 import DropdownList from "./DropdownList";
 import ImageWithFallback from "./ImageWithFallback";
+import AddToPlaylist from "./AddToPlaylist";
 
 const VideoDetailHeader = ({
   title,
@@ -136,6 +137,8 @@ const VideoDetailHeader = ({
       </aside>
 
       <aside className="cta">
+        {session && <AddToPlaylist videoId={videoId} />}
+
         <button onClick={copyVideoLink} title="Copy video link">
           <Image
             src={copied ? "/assets/icons/checkmark.svg" : "/assets/icons/link.svg"}

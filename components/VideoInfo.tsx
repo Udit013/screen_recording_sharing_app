@@ -1,13 +1,15 @@
 "use client";
 
 import { cn, parseTranscript } from "@/lib/utils";
-import { useState, useCallback, useRef } from "react";
+import { useState } from "react";
 import EmptyState from "./EmptyState";
 import VideoChapters from "./VideoChapters";
+import VideoNotes from "./VideoNotes";
 import { infos } from "@/constants";
 
 interface VideoInfoFullProps extends VideoInfoProps {
   onSeek?: (seconds: number) => void;
+  getCurrentTime?: () => number;
 }
 
 const VideoInfo = ({
@@ -22,6 +24,7 @@ const VideoInfo = ({
   title,
   ownerId,
   onSeek,
+  getCurrentTime,
 }: VideoInfoFullProps) => {
   const [activeTab, setActiveTab] = useState("ai summary");
   const parsedTranscript = parseTranscript(transcript ?? "");
@@ -93,6 +96,14 @@ const VideoInfo = ({
     />
   );
 
+  const renderNotes = () => (
+    <VideoNotes
+      videoId={videoId}
+      onSeek={onSeek}
+      getCurrentTime={getCurrentTime}
+    />
+  );
+
   const renderMetadata = () => (
     <div className="metadata">
       {metaDatas.map(({ label, value }, index) => (
@@ -115,6 +126,7 @@ const VideoInfo = ({
       case "transcript": return renderTranscript();
       case "ai summary": return renderAiSummary();
       case "chapters": return renderChapters();
+      case "notes": return renderNotes();
       case "metadata": return renderMetadata();
       default: return null;
     }

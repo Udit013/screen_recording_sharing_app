@@ -18,6 +18,7 @@ const RecordScreen = () => {
     recordedBlob,
     recordedVideoUrl,
     recordingDuration,
+    transcriptSegments,
     startRecording,
     stopRecording,
     resetRecording,
@@ -54,6 +55,7 @@ const RecordScreen = () => {
           type: recordedBlob.type,
           size: recordedBlob.size,
           duration: recordingDuration || 0,
+          transcriptSegments: transcriptSegments ?? [],
         })
       );
       router.push("/upload");

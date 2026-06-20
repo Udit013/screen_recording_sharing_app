@@ -7,6 +7,7 @@ import {
   calculateRecordingDuration,
 } from "@/lib/utils";
 import { DEFAULT_RECORDING_CONFIG } from "@/constants";
+import { createTranscriber, type Transcriber } from "@/lib/speech";
 
 export const useScreenRecording = () => {
   const [state, setState] = useState<ScreenRecordingState>({
@@ -14,6 +15,7 @@ export const useScreenRecording = () => {
     recordedBlob: null,
     recordedVideoUrl: "",
     recordingDuration: 0,
+    transcriptSegments: [],
   });
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -23,12 +25,14 @@ export const useScreenRecording = () => {
   const startTimeRef = useRef<number | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const transcriberRef = useRef<Transcriber | null>(null);
 
   const cleanup = useCallback(() => {
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
     }
+    transcriberRef.current?.stop();
     cleanupRecording(
       mediaRecorderRef.current,
       streamRef.current,
@@ -49,11 +53,14 @@ export const useScreenRecording = () => {
   const handleRecordingStop = useCallback(() => {
     const { blob, url } = createRecordingBlob(chunksRef.current);
     const duration = calculateRecordingDuration(startTimeRef.current);
+    transcriberRef.current?.stop();
+    const segments = transcriberRef.current?.getSegments() ?? [];
     setState((prev) => ({
       ...prev,
       recordedBlob: blob,
       recordedVideoUrl: url,
       recordingDuration: duration,
+      transcriptSegments: segments,
       isRecording: false,
     }));
   }, []);
@@ -169,7 +176,16 @@ export const useScreenRecording = () => {
       startTimeRef.current = Date.now();
       recorder.start(1000);
 
-      setState((prev) => ({ ...prev, isRecording: true }));
+      // Capture a timestamped transcript from narration (Chrome/Edge only).
+      if (withMic) {
+        const transcriber = createTranscriber(() =>
+          startTimeRef.current ? (Date.now() - startTimeRef.current) / 1000 : 0
+        );
+        transcriberRef.current = transcriber;
+        if (transcriber.supported) transcriber.start();
+      }
+
+      setState((prev) => ({ ...prev, isRecording: true, transcriptSegments: [] }));
       return true;
     } catch (error) {
       console.error("Recording error:", error);
@@ -182,6 +198,7 @@ export const useScreenRecording = () => {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
     }
+    transcriberRef.current?.stop();
     cleanupRecording(
       mediaRecorderRef.current,
       streamRef.current,
@@ -195,8 +212,15 @@ export const useScreenRecording = () => {
     stopRecording();
     setState((prev) => {
       if (prev.recordedVideoUrl) URL.revokeObjectURL(prev.recordedVideoUrl);
-      return { isRecording: false, recordedBlob: null, recordedVideoUrl: "", recordingDuration: 0 };
+      return {
+        isRecording: false,
+        recordedBlob: null,
+        recordedVideoUrl: "",
+        recordingDuration: 0,
+        transcriptSegments: [],
+      };
     });
+    transcriberRef.current = null;
     startTimeRef.current = null;
     chunksRef.current = [];
   }, [stopRecording]);
