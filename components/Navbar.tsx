@@ -40,7 +40,10 @@ const Navbar = () => {
             >
               Collections
             </button>
-            <button onClick={() => router.push(`/profile/${session?.user.id}`)}>
+            <button
+              onClick={() => router.push(`/profile/${session?.user.id}`)}
+              aria-label="Your profile"
+            >
               <ImageWithFallback
                 src={session?.user.image ?? ""}
                 alt="User"
@@ -49,7 +52,11 @@ const Navbar = () => {
                 className="rounded-full aspect-square"
               />
             </button>
-            <button onClick={handleSignOut} className="cursor-pointer">
+            <button
+              onClick={handleSignOut}
+              className="cursor-pointer"
+              aria-label="Sign out"
+            >
               <Image
                 src="/assets/icons/logout.svg"
                 alt="logout"

@@ -138,7 +138,11 @@ const VideoDetailHeader = ({
       <aside className="cta">
         {session && <AddToPlaylist videoId={videoId} />}
 
-        <button onClick={copyVideoLink} title="Copy video link">
+        <button
+          onClick={copyVideoLink}
+          title="Copy video link"
+          aria-label="Copy video link"
+        >
           <Image
             src={copied ? "/assets/icons/checkmark.svg" : "/assets/icons/link.svg"}
             alt="Copy Link"
@@ -153,6 +157,7 @@ const VideoDetailHeader = ({
               onClick={() => setShowShareModal(true)}
               className="share-btn"
               title="Share with expiry link"
+              aria-label="Share with expiry link"
             >
               <Image src="/assets/icons/smiley.svg" alt="Share" width={20} height={20} />
             </button>
@@ -186,7 +191,12 @@ const VideoDetailHeader = ({
           <div className="share-modal" onClick={(e) => e.stopPropagation()}>
             <div className="share-modal-header">
               <h3>Share this video</h3>
-              <button onClick={() => setShowShareModal(false)}>×</button>
+              <button
+                onClick={() => setShowShareModal(false)}
+                aria-label="Close share dialog"
+              >
+                ×
+              </button>
             </div>
 
             <div className="share-modal-body">
