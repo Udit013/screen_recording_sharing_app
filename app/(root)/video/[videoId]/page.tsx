@@ -68,7 +68,6 @@ const VideoDetailPage = ({ params }: PageProps) => {
         videoId={video.videoId}
         ownerId={video.userId}
         visibility={video.visibility}
-        thumbnailUrl={video.thumbnailUrl}
         shareToken={video.shareToken}
       />
 

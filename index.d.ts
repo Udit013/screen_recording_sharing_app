@@ -94,7 +94,6 @@ declare global {
     videoId: string;
     ownerId: string;
     visibility: Visibility;
-    thumbnailUrl: string;
     shareToken?: string | null;
   }
 

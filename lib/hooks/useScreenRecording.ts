@@ -48,7 +48,10 @@ export const useScreenRecording = () => {
       cleanup();
       if (state.recordedVideoUrl) URL.revokeObjectURL(state.recordedVideoUrl);
     };
-  }, []); // only on unmount
+    // Intentionally runs only on unmount — re-running on state change would
+    // revoke the blob URL while the preview is still playing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleRecordingStop = useCallback(() => {
     const { blob, url } = createRecordingBlob(chunksRef.current);

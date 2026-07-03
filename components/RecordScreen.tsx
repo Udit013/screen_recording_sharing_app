@@ -11,7 +11,6 @@ const RecordScreen = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [withCamera, setWithCamera] = useState(false);
-  const [recordingBlobRef] = useState<{ blob: Blob | null }>({ blob: null });
 
   const {
     isRecording,

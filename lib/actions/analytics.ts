@@ -5,6 +5,7 @@ import { videoViews, videos } from "@/drizzle/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
+import { clampInt, LIMITS } from "@/lib/validate";
 
 /**
  * Records a single watch event. Called when a viewer leaves the page or the
@@ -23,9 +24,11 @@ export async function recordWatch(
   await db.insert(videoViews).values({
     videoId,
     viewerId,
-    anonId: viewerId ? null : anonId || null,
-    watchedSeconds: Math.max(0, Math.floor(watchedSeconds)),
-    completed,
+    anonId: viewerId
+      ? null
+      : String(anonId ?? "").slice(0, LIMITS.anonIdLength) || null,
+    watchedSeconds: clampInt(watchedSeconds, 0, LIMITS.maxWatchSeconds),
+    completed: completed === true,
   });
 }
 

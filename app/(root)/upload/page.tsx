@@ -110,7 +110,6 @@ const UploadPage = () => {
           console.error("Error loading recorded video:", err);
           sessionStorage.removeItem("recordedVideo");
         });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     } catch (err) {
       console.error("Error parsing stored video:", err);
       sessionStorage.removeItem("recordedVideo");

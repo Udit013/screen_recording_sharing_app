@@ -1,6 +1,5 @@
 export const dynamic = "force-dynamic";
 
-import { redirect } from "next/navigation";
 import { getVideoByShareToken } from "@/lib/actions/video";
 import { daysAgo, formatDuration } from "@/lib/utils";
 import Image from "next/image";

@@ -6,6 +6,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
+import { requiredString, optionalString, LIMITS } from "@/lib/validate";
 
 const getSessionUserId = async (): Promise<string> => {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -82,12 +83,16 @@ export async function createPlaylist(
   description?: string
 ): Promise<Playlist> {
   const userId = await getSessionUserId();
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("Playlist name cannot be empty");
+  const trimmed = requiredString(name, "Playlist name", LIMITS.playlistName);
+  const desc = optionalString(
+    description,
+    "Description",
+    LIMITS.playlistDescription
+  );
 
   const [created] = await db
     .insert(playlists)
-    .values({ userId, name: trimmed, description: description?.trim() || null })
+    .values({ userId, name: trimmed, description: desc })
     .returning();
 
   revalidatePath("/playlists");
@@ -101,14 +106,18 @@ export async function renamePlaylist(
 ): Promise<void> {
   const userId = await getSessionUserId();
   await assertOwner(playlistId, userId);
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("Playlist name cannot be empty");
+  const trimmed = requiredString(name, "Playlist name", LIMITS.playlistName);
+  const desc = optionalString(
+    description,
+    "Description",
+    LIMITS.playlistDescription
+  );
 
   await db
     .update(playlists)
     .set({
       name: trimmed,
-      description: description?.trim() || null,
+      description: desc,
       updatedAt: new Date(),
     })
     .where(eq(playlists.id, playlistId));

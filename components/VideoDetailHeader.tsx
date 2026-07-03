@@ -19,7 +19,6 @@ const VideoDetailHeader = ({
   videoId,
   ownerId,
   visibility,
-  thumbnailUrl,
   shareToken: initialShareToken,
 }: VideoDetailHeaderProps) => {
   const [isDeleting, setIsDeleting] = useState(false);

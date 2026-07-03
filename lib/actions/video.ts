@@ -10,6 +10,12 @@ import { doesContentMatch, getOrderByClause } from "@/lib/utils";
 import { getSignedUploadParams, deleteCloudinaryResource } from "@/lib/cloudinary";
 import { SHARE_TOKEN_EXPIRY_DAYS } from "@/constants";
 import { analyzeVideoContent, generateChapters } from "@/lib/gemini";
+import {
+  requiredString,
+  assertVisibility,
+  clampInt,
+  LIMITS,
+} from "@/lib/validate";
 
 const revalidatePaths = (paths: string[]) =>
   paths.forEach((path) => revalidatePath(path));
@@ -38,28 +44,67 @@ export const getVideoUploadUrl = withError(async () => {
   return { videoId, ...params };
 });
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const getThumbnailUploadUrl = withError(async (videoId: string) => {
-  await getSessionUserId();
+  const userId = await getSessionUserId();
+  if (!UUID_RE.test(videoId)) throw new Error("Invalid video id");
+
+  // If this videoId already belongs to a saved video, only its owner may
+  // request a signed URL for it (prevents overwriting another user's assets).
+  const [existing] = await db
+    .select({ userId: videos.userId })
+    .from(videos)
+    .where(eq(videos.videoId, videoId));
+  if (existing && existing.userId !== userId) throw new Error("Not authorized");
+
   return getSignedUploadParams("snapcast/thumbnails", videoId, "image");
 });
 
 export const saveVideoDetails = withError(async (videoDetails: VideoDetails) => {
   const userId = await getSessionUserId();
 
-  const tagsArray =
+  if (!UUID_RE.test(videoDetails.videoId)) throw new Error("Invalid video id");
+
+  // Only accept media URLs from our own Cloudinary account — these fields
+  // cross the network as plain strings and must not be trusted.
+  const cloudPrefix = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/`;
+  if (
+    !videoDetails.videoUrl.startsWith(cloudPrefix) ||
+    !videoDetails.thumbnailUrl.startsWith(cloudPrefix)
+  ) {
+    throw new Error("Media URLs must come from the configured CDN");
+  }
+
+  const title = requiredString(videoDetails.title, "Title", LIMITS.title);
+  const description = requiredString(
+    videoDetails.description,
+    "Description",
+    LIMITS.description
+  );
+  const visibility = assertVisibility(videoDetails.visibility);
+
+  const tagsArray = (
     typeof videoDetails.tags === "string"
       ? videoDetails.tags.split(",").map((t: string) => t.trim()).filter(Boolean)
-      : (videoDetails.tags ?? []);
+      : (videoDetails.tags ?? [])
+  )
+    .slice(0, LIMITS.maxTags)
+    .map((t) => t.slice(0, LIMITS.tagLength));
 
   const now = new Date();
   await db.insert(videos).values({
-    title: videoDetails.title,
-    description: videoDetails.description,
+    title,
+    description,
     videoId: videoDetails.videoId,
     videoUrl: videoDetails.videoUrl,
     thumbnailUrl: videoDetails.thumbnailUrl,
-    visibility: videoDetails.visibility,
-    duration: videoDetails.duration ?? null,
+    visibility,
+    duration:
+      videoDetails.duration != null
+        ? clampInt(videoDetails.duration, 0, LIMITS.maxTimestampSeconds)
+        : null,
     tags: tagsArray,
     userId,
     createdAt: now,
@@ -178,6 +223,10 @@ export const incrementVideoViews = withError(async (videoId: string) => {
 // ─── AI Processing ─────────────────────────────────────────────────────────
 
 export const processVideoAI = withError(async (videoId: string) => {
+  // Requires a signed-in user: this action spends Gemini quota, so it must
+  // not be invocable anonymously. Any authenticated viewer may trigger it.
+  await getSessionUserId();
+
   const [existing] = await db
     .select()
     .from(videos)
@@ -245,8 +294,12 @@ export const saveVideoTranscript = withError(
   async (videoId: string, segments: TranscriptEntry[]) => {
     const userId = await getSessionUserId();
     const clean = (segments ?? [])
+      .slice(0, LIMITS.maxTranscriptSegments)
       .filter((s) => s && typeof s.text === "string" && s.text.trim())
-      .map((s) => ({ time: s.time, text: s.text.trim() }));
+      .map((s) => ({
+        time: String(s.time).slice(0, 12),
+        text: s.text.trim().slice(0, LIMITS.transcriptSegmentText),
+      }));
     const flatText = clean.map((s) => s.text).join(" ");
 
     await db
@@ -306,7 +359,7 @@ export const generateShareToken = withError(
     const userId = await getSessionUserId();
     const token = crypto.randomUUID();
     const expiry = new Date();
-    expiry.setDate(expiry.getDate() + expiresInDays);
+    expiry.setDate(expiry.getDate() + clampInt(expiresInDays, 1, 30));
 
     await db
       .update(videos)

@@ -6,6 +6,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
+import { requiredString, clampInt, LIMITS } from "@/lib/validate";
 
 const getSessionUserId = async (): Promise<string> => {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -30,15 +31,14 @@ export async function createNote(
   content: string
 ): Promise<Note> {
   const userId = await getSessionUserId();
-  const trimmed = content.trim();
-  if (!trimmed) throw new Error("Note content cannot be empty");
+  const trimmed = requiredString(content, "Note", LIMITS.noteContent);
 
   const [created] = await db
     .insert(notes)
     .values({
       userId,
       videoId,
-      timestamp: Math.max(0, Math.floor(timestamp)),
+      timestamp: clampInt(timestamp, 0, LIMITS.maxTimestampSeconds),
       content: trimmed,
     })
     .returning();
@@ -52,8 +52,7 @@ export async function updateNote(
   content: string
 ): Promise<void> {
   const userId = await getSessionUserId();
-  const trimmed = content.trim();
-  if (!trimmed) throw new Error("Note content cannot be empty");
+  const trimmed = requiredString(content, "Note", LIMITS.noteContent);
 
   await db
     .update(notes)
