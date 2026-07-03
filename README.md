@@ -2,6 +2,7 @@
 
 > Record your screen, share instantly, powered by AI. Built with Next.js 15, Neon PostgreSQL, Cloudinary, and Gemini 2.0 Flash.
 
+[![CI](https://github.com/Udit013/screen_recording_sharing_app/actions/workflows/ci.yml/badge.svg)](https://github.com/Udit013/screen_recording_sharing_app/actions/workflows/ci.yml)
 [![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?logo=vercel)](https://snapcast-video-sharing.vercel.app)
 [![Next.js 15](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://typescriptlang.org)
@@ -87,6 +88,22 @@ Next.js 15 Server Actions
            ▼
 Cloudinary CDN  ←→  Neon PostgreSQL  ←→  Vercel Edge
 ```
+
+---
+
+## Engineering Quality
+
+| Practice | Implementation |
+|---|---|
+| **CI pipeline** | GitHub Actions on every push/PR: type check → unit tests → production build |
+| **Unit tests** | Vitest suite covering input-validation guards and core utilities |
+| **Strict builds** | Type and lint errors fail the build (no `ignoreBuildErrors`) |
+| **Input validation** | Every server action validates/clamps client input at the network boundary (`lib/validate.ts`) |
+| **Authorization** | Ownership checks on all mutations; signed-URL issuance blocked for other users' assets |
+| **Security headers** | HSTS, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy |
+| **Image proxy allowlist** | `next/image` restricted to Cloudinary + Google avatars (no open proxy) |
+| **Resilience UX** | Global error boundary, branded 404, streaming skeletons with reduced-motion support |
+| **Link previews** | Per-video OpenGraph/Twitter cards on share pages (thumbnail + AI summary) |
 
 ---
 
