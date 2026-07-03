@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import type { Metadata } from "next";
 import { getVideoByShareToken } from "@/lib/actions/video";
 import { daysAgo, formatDuration } from "@/lib/utils";
 import Image from "next/image";
@@ -8,6 +9,42 @@ import Link from "next/link";
 type SharePageProps = {
   params: Promise<{ token: string }>;
 };
+
+// Rich link previews when a share URL is pasted into Slack/WhatsApp/Twitter.
+// Share pages are token-gated, so they are excluded from search indexing.
+export async function generateMetadata({
+  params,
+}: SharePageProps): Promise<Metadata> {
+  const { token } = await params;
+  const result = await getVideoByShareToken(token);
+
+  if (!result) {
+    return { title: "Shared video", robots: { index: false, follow: false } };
+  }
+
+  const { video, user } = result;
+  const description =
+    video.aiSummary ?? video.description ?? "Watch this video on SnapCast";
+
+  return {
+    title: video.title,
+    description,
+    robots: { index: false, follow: false },
+    openGraph: {
+      type: "video.other",
+      title: video.title,
+      description,
+      images: [{ url: video.thumbnailUrl, width: 1280, height: 720 }],
+      ...(user?.name ? { authors: [user.name] } : {}),
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: video.title,
+      description,
+      images: [video.thumbnailUrl],
+    },
+  };
+}
 
 const SharePage = async ({ params }: SharePageProps) => {
   const { token } = await params;

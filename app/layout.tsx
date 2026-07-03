@@ -9,10 +9,30 @@ const geistKarla = Karla({
 });
 
 export const metadata: Metadata = {
-  title: "SnapCast",
-  description: "A Screen Sharing App",
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"
+  ),
+  title: {
+    default: "SnapCast — Screen Recording & Video Sharing",
+    template: "%s | SnapCast",
+  },
+  description:
+    "Record your screen with webcam overlay, get AI-generated summaries and chapters, and share videos with privacy controls — all from your browser.",
   icons: {
     icon: "/assets/icons/logo.svg",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "SnapCast",
+    title: "SnapCast — Screen Recording & Video Sharing",
+    description:
+      "Browser-native screen recording with AI summaries, chapters, and privacy-controlled sharing.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "SnapCast — Screen Recording & Video Sharing",
+    description:
+      "Browser-native screen recording with AI summaries, chapters, and privacy-controlled sharing.",
   },
 };
 
