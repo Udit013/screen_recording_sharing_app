@@ -129,3 +129,18 @@ describe("daysAgo", () => {
     expect(daysAgo(threeDays)).toBe("3 days ago");
   });
 });
+
+describe("parseTimeToSeconds", () => {
+  it("parses mm:ss and hh:mm:ss", async () => {
+    const { parseTimeToSeconds } = await import("@/lib/utils");
+    expect(parseTimeToSeconds("1:30")).toBe(90);
+    expect(parseTimeToSeconds("01:02:03")).toBe(3723);
+  });
+
+  it("parses plain seconds and rejects junk", async () => {
+    const { parseTimeToSeconds } = await import("@/lib/utils");
+    expect(parseTimeToSeconds("75")).toBe(75);
+    expect(parseTimeToSeconds("abc")).toBe(0);
+    expect(parseTimeToSeconds("1:xx")).toBe(0);
+  });
+});

@@ -245,3 +245,14 @@ export function parseTranscript(transcript: string): TranscriptEntry[] {
 
   return result;
 }
+
+// Parses "1:30", "01:02:03", or plain seconds into integer seconds.
+export function parseTimeToSeconds(input: string): number {
+  const trimmed = input.trim();
+  if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
+  const parts = trimmed.split(":").map(Number);
+  if (parts.some((p) => !Number.isFinite(p))) return 0;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return 0;
+}

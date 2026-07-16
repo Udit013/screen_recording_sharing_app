@@ -1,7 +1,7 @@
 "use client";
 
-import { cn, parseTranscript } from "@/lib/utils";
-import { useState } from "react";
+import { cn, parseTranscript, parseTimeToSeconds } from "@/lib/utils";
+import { useMemo, useState } from "react";
 import EmptyState from "./EmptyState";
 import VideoChapters from "./VideoChapters";
 import VideoNotes from "./VideoNotes";
@@ -12,8 +12,23 @@ interface VideoInfoFullProps extends VideoInfoProps {
   getCurrentTime?: () => number;
 }
 
+// Wraps case-insensitive matches of `query` in <mark> for search highlighting.
+const highlight = (text: string, query: string) => {
+  if (!query.trim()) return text;
+  const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "ig"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === query.trim().toLowerCase() ? (
+      <mark key={i}>{part}</mark>
+    ) : (
+      part
+    )
+  );
+};
+
 const VideoInfo = ({
   transcript,
+  transcriptSegments,
   aiSummary,
   tags,
   chapters,
@@ -27,7 +42,30 @@ const VideoInfo = ({
   getCurrentTime,
 }: VideoInfoFullProps) => {
   const [activeTab, setActiveTab] = useState("ai summary");
-  const parsedTranscript = parseTranscript(transcript ?? "");
+  const [transcriptQuery, setTranscriptQuery] = useState("");
+  const [transcriptCopied, setTranscriptCopied] = useState(false);
+
+  // Prefer structured segments captured at record time; fall back to
+  // parsing a raw VTT-style transcript blob.
+  const segments = useMemo<TranscriptEntry[]>(() => {
+    if (transcriptSegments && transcriptSegments.length > 0)
+      return transcriptSegments;
+    return parseTranscript(transcript ?? "");
+  }, [transcriptSegments, transcript]);
+
+  const visibleSegments = useMemo(() => {
+    const q = transcriptQuery.trim().toLowerCase();
+    if (!q) return segments;
+    return segments.filter((s) => s.text.toLowerCase().includes(q));
+  }, [segments, transcriptQuery]);
+
+  const copyTranscript = () => {
+    const flat = segments.map((s) => `[${s.time}] ${s.text}`).join("\n");
+    navigator.clipboard.writeText(flat).then(() => {
+      setTranscriptCopied(true);
+      setTimeout(() => setTranscriptCopied(false), 2000);
+    });
+  };
 
   const metaDatas = [
     {
@@ -43,24 +81,55 @@ const VideoInfo = ({
     { label: "Video URL", value: videoUrl },
   ];
 
-  const renderTranscript = () => (
-    <ul className="transcript">
-      {parsedTranscript.length > 0 ? (
-        parsedTranscript.map((item, index) => (
-          <li key={index}>
-            <h2>[{item.time}]</h2>
-            <p>{item.text}</p>
-          </li>
-        ))
-      ) : (
+  const renderTranscript = () => {
+    if (segments.length === 0) {
+      return (
         <EmptyState
           icon="/assets/icons/copy.svg"
           title="No transcript available"
-          description="This video doesn't include any transcribed content yet."
+          description="Narrated screen recordings are transcribed automatically while you record (Chrome/Edge)."
         />
-      )}
-    </ul>
-  );
+      );
+    }
+
+    return (
+      <div className="transcript-panel">
+        <div className="transcript-toolbar">
+          <input
+            type="search"
+            className="transcript-search"
+            placeholder="Search transcript…"
+            value={transcriptQuery}
+            onChange={(e) => setTranscriptQuery(e.target.value)}
+            aria-label="Search transcript"
+          />
+          <button className="transcript-copy" onClick={copyTranscript}>
+            {transcriptCopied ? "Copied!" : "Copy"}
+          </button>
+        </div>
+
+        {visibleSegments.length === 0 ? (
+          <p className="transcript-no-match">
+            No matches for “{transcriptQuery}”.
+          </p>
+        ) : (
+          <ul className="transcript">
+            {visibleSegments.map((item, index) => (
+              <li key={index}>
+                <button
+                  className="transcript-time"
+                  onClick={() => onSeek?.(parseTimeToSeconds(item.time))}
+                >
+                  {item.time}
+                </button>
+                <p>{highlight(item.text, transcriptQuery)}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  };
 
   const renderAiSummary = () => (
     <div className="ai-summary">
