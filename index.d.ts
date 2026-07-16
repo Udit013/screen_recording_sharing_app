@@ -99,6 +99,7 @@ declare global {
 
   interface VideoInfoProps {
     transcript?: string | null;
+    transcriptSegments?: TranscriptEntry[] | null;
     aiSummary?: string | null;
     tags?: string[] | null;
     chapters?: Chapter[] | null;
@@ -202,6 +203,8 @@ declare global {
 
   interface ScreenRecordingState {
     isRecording: boolean;
+    isPaused: boolean;
+    elapsedSeconds: number;
     recordedBlob: Blob | null;
     recordedVideoUrl: string;
     recordingDuration: number;
@@ -273,6 +276,30 @@ declare global {
     totalWatchSeconds: number;
     avgWatchSeconds: number;
     completionRate: number; // 0..1
+  }
+
+  interface CommentWithUser {
+    id: string;
+    videoId: string;
+    userId: string;
+    parentId: string | null;
+    timestamp: number | null;
+    content: string;
+    createdAt: Date;
+    userName: string | null;
+    userImage: string | null;
+  }
+
+  type PipPosition = "br" | "bl" | "tr" | "tl";
+  type PipShape = "circle" | "rounded";
+  type PipSize = "sm" | "md" | "lg";
+
+  interface RecordingOptions {
+    withMic: boolean;
+    withCamera: boolean;
+    pipPosition: PipPosition;
+    pipShape: PipShape;
+    pipSize: PipSize;
   }
 
   interface ChannelAnalytics {

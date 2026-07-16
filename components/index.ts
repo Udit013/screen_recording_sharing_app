@@ -8,6 +8,7 @@ export { default as VideoDetailHeader } from "./VideoDetailHeader";
 export { default as VideoInfo } from "./VideoInfo";
 export { default as VideoChapters } from "./VideoChapters";
 export { default as VideoNotes } from "./VideoNotes";
+export { default as VideoComments } from "./VideoComments";
 export { default as ChannelAnalyticsPanel } from "./ChannelAnalyticsPanel";
 export { default as AddToPlaylist } from "./AddToPlaylist";
 export { default as PlaylistsManager } from "./PlaylistsManager";

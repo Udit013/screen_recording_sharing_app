@@ -131,6 +131,24 @@ export const playlistVideos = pgTable("playlist_videos", {
   addedAt: timestamp("added_at").notNull().defaultNow(),
 });
 
+// ── Timestamp comments (public discussion on a video) ──────────────────────
+export const comments = pgTable("comments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  videoId: text("video_id")
+    .notNull()
+    .references(() => videos.videoId, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  // Single-level threading: replies carry the id of a top-level comment.
+  parentId: uuid("parent_id"),
+  // Nullable: a comment may be general or pinned to a moment in the video.
+  timestamp: integer("timestamp"),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ── Per-view watch events (powers analytics) ───────────────────────────────
 export const videoViews = pgTable("video_views", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -158,4 +176,5 @@ export const schema = {
   playlists,
   playlistVideos,
   videoViews,
+  comments,
 };

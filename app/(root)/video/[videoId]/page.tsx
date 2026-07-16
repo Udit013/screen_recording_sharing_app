@@ -1,7 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { VideoDetailHeader, VideoInfo, VideoPlayer } from "@/components";
+import {
+  VideoDetailHeader,
+  VideoInfo,
+  VideoPlayer,
+  VideoComments,
+} from "@/components";
 import { getVideoById, processVideoAI } from "@/lib/actions/video";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VideoPlayerHandle } from "@/components/VideoPlayer";
@@ -84,12 +89,21 @@ const VideoDetailPage = ({ params }: PageProps) => {
             ref={playerRef}
             videoUrl={video.videoUrl}
             videoId={video.videoId}
+            chapters={video.chapters}
             onReady={handleVideoReady}
+          />
+
+          <VideoComments
+            videoId={video.videoId}
+            ownerId={video.userId}
+            onSeek={(seconds) => playerRef.current?.seekTo(seconds)}
+            getCurrentTime={() => playerRef.current?.getCurrentTime() ?? 0}
           />
         </div>
 
         <VideoInfo
           transcript={video.transcript}
+          transcriptSegments={video.transcriptSegments}
           aiSummary={video.aiSummary}
           tags={video.tags}
           chapters={video.chapters}
