@@ -33,6 +33,11 @@
 | **Shareable Links** | Time-limited share tokens (7-day expiry) with revocation |
 | **Processing Status** | Live pill while AI summary & chapters are generated |
 | **Google OAuth** | One-click sign-in via better-auth |
+| **Custom Player** | Handcrafted controls: buffered seekbar, chapter ticks, speed menu, PiP, fullscreen, keyboard shortcuts, `?t=` deep links |
+| **Timestamp Comments** | Threaded discussion pinned to moments; click a timestamp to jump the player |
+| **Interactive Transcript** | Click-to-seek segments, live search with highlighting, one-click copy |
+| **Recording Studio** | Pause/resume, 3-2-1 countdown, live timer, mic toggle, webcam position/shape/size options |
+| **Crash Recovery** | In-progress recordings persist to IndexedDB; restore after a refresh or browser crash |
 
 ---
 
