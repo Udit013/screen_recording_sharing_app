@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import type { Metadata } from "next";
 import { getVideoByShareToken } from "@/lib/actions/video";
+import { VideoPlayer } from "@/components";
 import { daysAgo, formatDuration } from "@/lib/utils";
 import Image from "next/image";
 import Link from "next/link";
@@ -99,9 +100,11 @@ const SharePage = async ({ params }: SharePageProps) => {
           </p>
         </div>
 
-        <div className="video-player aspect-video w-full rounded-2xl bg-black overflow-hidden">
-          <video src={video.videoUrl} controls preload="metadata" />
-        </div>
+        <VideoPlayer
+          videoUrl={video.videoUrl}
+          videoId={video.videoId}
+          chapters={video.chapters}
+        />
 
         {video.description && (
           <div className="bg-white rounded-18 p-6 shadow-10">
