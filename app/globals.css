@@ -597,10 +597,6 @@
   .video-player {
     @apply relative aspect-video w-full rounded-2xl bg-[#000] flex-none overflow-hidden;
 
-    iframe {
-      @apply absolute inset-0 h-full w-full rounded-2xl;
-    }
-
     video {
       @apply absolute inset-0 h-full w-full rounded-2xl object-contain bg-[#000];
     }
@@ -1219,4 +1215,40 @@
 .studio-shortcuts kbd {
   background: #fff8fb; border: 1px solid rgba(108,102,133,0.25);
   border-radius: 5px; padding: 0.1rem 0.4rem; font-size: 0.72rem; font-weight: 700;
+}
+
+/* ─── Polish pass: playback sync, focus states, upload progress ──────────── */
+.transcript-active {
+  background: #ffeef5; border-radius: 10px;
+}
+.transcript-active .transcript-time { background: #ff4393; color: #fff; }
+
+.chapter-active {
+  background: #ffeef5; border-radius: 10px;
+}
+.chapter-active .chapter-time { background: #ff4393 !important; color: #fff !important; }
+
+.upload-progress {
+  height: 8px; border-radius: 9999px; background: #ffeef5; overflow: hidden;
+}
+.upload-progress-fill {
+  height: 100%; background: #ff4393; border-radius: 9999px;
+  transition: width 0.2s ease;
+}
+
+/* Keyboard focus states for the player */
+.custom-player:focus-visible {
+  outline: 3px solid #ff4393; outline-offset: 2px;
+}
+.player-buttons button:focus-visible,
+.player-track:focus-visible {
+  outline: 2px solid #fff; outline-offset: 1px;
+}
+
+/* Player responsiveness on small screens */
+@media (max-width: 480px) {
+  .player-volume { display: none; }
+  .player-ts-btn { display: none; }
+  .player-controls { padding: 20px 8px 6px; }
+  .player-time { font-size: 0.72rem; }
 }

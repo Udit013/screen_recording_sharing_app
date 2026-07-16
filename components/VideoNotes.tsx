@@ -21,6 +21,7 @@ const VideoNotes = ({ videoId, onSeek, getCurrentTime }: VideoNotesProps) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [content, setContent] = useState("");
+  const [capturedTs, setCapturedTs] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -38,13 +39,14 @@ const VideoNotes = ({ videoId, onSeek, getCurrentTime }: VideoNotesProps) => {
   const handleAdd = () => {
     const text = content.trim();
     if (!text) return;
-    const ts = Math.floor(getCurrentTime?.() ?? 0);
+    const ts = capturedTs ?? Math.floor(getCurrentTime?.() ?? 0);
     startTransition(async () => {
       const created = await createNote(videoId, ts, text);
       setNotes((prev) =>
         [...prev, created].sort((a, b) => a.timestamp - b.timestamp)
       );
       setContent("");
+      setCapturedTs(null);
     });
   };
 
@@ -84,6 +86,11 @@ const VideoNotes = ({ videoId, onSeek, getCurrentTime }: VideoNotesProps) => {
           placeholder="Add a note at the current timestamp…"
           value={content}
           onChange={(e) => setContent(e.target.value)}
+          onFocus={() => {
+            if (capturedTs === null) {
+              setCapturedTs(Math.floor(getCurrentTime?.() ?? 0));
+            }
+          }}
           rows={2}
         />
         <button
@@ -91,7 +98,9 @@ const VideoNotes = ({ videoId, onSeek, getCurrentTime }: VideoNotesProps) => {
           onClick={handleAdd}
           disabled={isPending || !content.trim()}
         >
-          Add note @ {formatDuration(Math.floor(getCurrentTime?.() ?? 0)) || "0:00"}
+          {capturedTs !== null
+            ? `Add note @ ${formatDuration(capturedTs) || "0:00"}`
+            : "Add note at current time"}
         </button>
       </div>
 

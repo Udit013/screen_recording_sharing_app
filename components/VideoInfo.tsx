@@ -1,7 +1,7 @@
 "use client";
 
 import { cn, parseTranscript, parseTimeToSeconds } from "@/lib/utils";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import EmptyState from "./EmptyState";
 import VideoChapters from "./VideoChapters";
 import VideoNotes from "./VideoNotes";
@@ -44,6 +44,19 @@ const VideoInfo = ({
   const [activeTab, setActiveTab] = useState("ai summary");
   const [transcriptQuery, setTranscriptQuery] = useState("");
   const [transcriptCopied, setTranscriptCopied] = useState(false);
+  const [currentSeconds, setCurrentSeconds] = useState(0);
+  const activeSegmentRef = useRef<HTMLLIElement | null>(null);
+
+  // Follow playback while a time-synced tab is open so the active transcript
+  // segment and chapter stay highlighted.
+  const timeSyncedTab = activeTab === "transcript" || activeTab === "chapters";
+  useEffect(() => {
+    if (!timeSyncedTab || !getCurrentTime) return;
+    const id = setInterval(() => {
+      setCurrentSeconds(Math.floor(getCurrentTime()));
+    }, 500);
+    return () => clearInterval(id);
+  }, [timeSyncedTab, getCurrentTime]);
 
   // Prefer structured segments captured at record time; fall back to
   // parsing a raw VTT-style transcript blob.
@@ -58,6 +71,28 @@ const VideoInfo = ({
     if (!q) return segments;
     return segments.filter((s) => s.text.toLowerCase().includes(q));
   }, [segments, transcriptQuery]);
+
+  // Index (within visibleSegments) of the segment currently being spoken.
+  const activeSegmentIndex = useMemo(() => {
+    let active = -1;
+    for (let i = 0; i < visibleSegments.length; i++) {
+      if (parseTimeToSeconds(visibleSegments[i].time) <= currentSeconds) {
+        active = i;
+      } else {
+        break;
+      }
+    }
+    return active;
+  }, [visibleSegments, currentSeconds]);
+
+  // Keep the active segment in view as playback progresses (not while searching).
+  useEffect(() => {
+    if (activeTab !== "transcript" || transcriptQuery) return;
+    activeSegmentRef.current?.scrollIntoView({
+      block: "nearest",
+      behavior: "smooth",
+    });
+  }, [activeSegmentIndex, activeTab, transcriptQuery]);
 
   const copyTranscript = () => {
     const flat = segments.map((s) => `[${s.time}] ${s.text}`).join("\n");
@@ -86,8 +121,8 @@ const VideoInfo = ({
       return (
         <EmptyState
           icon="/assets/icons/copy.svg"
-          title="No transcript available"
-          description="Narrated screen recordings are transcribed automatically while you record (Chrome/Edge)."
+          title="No transcript for this video"
+          description="Transcripts are captured live from your microphone while recording in the studio (Chrome/Edge). Browsers can't transcribe uploaded video files, so uploads don't include one."
         />
       );
     }
@@ -115,7 +150,11 @@ const VideoInfo = ({
         ) : (
           <ul className="transcript">
             {visibleSegments.map((item, index) => (
-              <li key={index}>
+              <li
+                key={index}
+                ref={index === activeSegmentIndex ? activeSegmentRef : null}
+                className={cn({ "transcript-active": index === activeSegmentIndex })}
+              >
                 <button
                   className="transcript-time"
                   onClick={() => onSeek?.(parseTimeToSeconds(item.time))}
@@ -162,6 +201,7 @@ const VideoInfo = ({
       videoId={videoId}
       ownerId={ownerId}
       onSeek={onSeek}
+      currentSeconds={currentSeconds}
     />
   );
 

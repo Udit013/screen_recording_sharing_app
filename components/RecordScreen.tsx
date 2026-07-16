@@ -100,9 +100,8 @@ const RecordScreen = () => {
   };
 
   const handleRecover = async () => {
-    const ok = await restoreRecording();
-    if (!ok) setCanRecover(false);
-    else setCanRecover(false);
+    await restoreRecording();
+    setCanRecover(false);
   };
 
   const handleDiscardRecovery = () => {

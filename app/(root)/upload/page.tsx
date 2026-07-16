@@ -28,29 +28,43 @@ interface CloudinaryUploadResult {
   duration?: number;
 }
 
-const uploadToCloudinary = async (
+// XHR instead of fetch so large uploads report byte-level progress.
+const uploadToCloudinary = (
   file: File,
-  params: CloudinaryUploadParams
-): Promise<CloudinaryUploadResult> => {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("api_key", params.apiKey);
-  form.append("timestamp", params.timestamp.toString());
-  form.append("signature", params.signature);
-  form.append("public_id", params.publicId);
+  params: CloudinaryUploadParams,
+  onProgress?: (pct: number) => void
+): Promise<CloudinaryUploadResult> =>
+  new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("api_key", params.apiKey);
+    form.append("timestamp", params.timestamp.toString());
+    form.append("signature", params.signature);
+    form.append("public_id", params.publicId);
 
-  const res = await fetch(params.uploadUrl, { method: "POST", body: form });
-  if (!res.ok) {
-    const err = await res.text().catch(() => res.statusText);
-    throw new Error(`Cloudinary upload failed: ${err}`);
-  }
-  return res.json() as Promise<CloudinaryUploadResult>;
-};
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", params.uploadUrl);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress?.(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText) as CloudinaryUploadResult);
+      } else {
+        reject(new Error(`Upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Upload failed — network error"));
+    xhr.send(form);
+  });
 
 const UploadPage = () => {
   const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [formData, setFormData] = useState<VideoFormValues>({
@@ -128,8 +142,8 @@ const UploadPage = () => {
     e.preventDefault();
     setError(null);
 
-    if (!video.file || !thumbnail.file) {
-      setError("Please upload both a video file and a thumbnail.");
+    if (!video.file) {
+      setError("Please choose a video file.");
       return;
     }
     if (!formData.title.trim() || !formData.description.trim()) {
@@ -143,18 +157,35 @@ const UploadPage = () => {
       const { videoId, ...videoUploadParams } = await getVideoUploadUrl();
       if (!videoId) throw new Error("Failed to get video upload credentials");
 
-      setUploadProgress("Uploading video… (this may take a moment)");
-      const videoResult = await uploadToCloudinary(video.file, videoUploadParams as CloudinaryUploadParams);
+      setUploadProgress("Uploading video…");
+      const videoResult = await uploadToCloudinary(
+        video.file,
+        videoUploadParams as CloudinaryUploadParams,
+        setUploadPercent
+      );
+      setUploadPercent(null);
 
-      setUploadProgress("Uploading thumbnail…");
-      const thumbParams = await getThumbnailUploadUrl(videoId);
-      const thumbResult = await uploadToCloudinary(thumbnail.file, thumbParams as CloudinaryUploadParams);
+      // Thumbnail is optional: without one, Cloudinary serves a frame from
+      // one second into the video.
+      let thumbnailUrl = `https://res.cloudinary.com/${
+        (videoUploadParams as CloudinaryUploadParams).cloudName
+      }/video/upload/so_1/${videoResult.public_id}.jpg`;
+
+      if (thumbnail.file) {
+        setUploadProgress("Uploading thumbnail…");
+        const thumbParams = await getThumbnailUploadUrl(videoId);
+        const thumbResult = await uploadToCloudinary(
+          thumbnail.file,
+          thumbParams as CloudinaryUploadParams
+        );
+        thumbnailUrl = thumbResult.secure_url;
+      }
 
       setUploadProgress("Saving video details…");
       await saveVideoDetails({
         videoId,
         videoUrl: videoResult.secure_url,
-        thumbnailUrl: thumbResult.secure_url,
+        thumbnailUrl,
         title: formData.title.trim(),
         description: formData.description.trim(),
         tags: formData.tags,
@@ -174,6 +205,7 @@ const UploadPage = () => {
     } finally {
       setIsSubmitting(false);
       setUploadProgress("");
+      setUploadPercent(null);
     }
   };
 
@@ -226,7 +258,7 @@ const UploadPage = () => {
 
         <FileInput
           id="thumbnail"
-          label="Thumbnail"
+          label="Thumbnail (optional — a frame from the video is used if omitted)"
           accept="image/*"
           file={thumbnail.file}
           previewUrl={thumbnail.previewUrl}
@@ -249,8 +281,27 @@ const UploadPage = () => {
           ]}
         />
 
+        {isSubmitting && uploadPercent !== null && (
+          <div
+            className="upload-progress"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={uploadPercent}
+          >
+            <div
+              className="upload-progress-fill"
+              style={{ width: `${uploadPercent}%` }}
+            />
+          </div>
+        )}
+
         <button type="submit" disabled={isSubmitting} className="submit-button">
-          {isSubmitting ? (uploadProgress || "Uploading…") : "Upload Video"}
+          {isSubmitting
+            ? uploadPercent !== null
+              ? `Uploading… ${uploadPercent}%`
+              : uploadProgress || "Uploading…"
+            : "Upload Video"}
         </button>
       </form>
     </main>

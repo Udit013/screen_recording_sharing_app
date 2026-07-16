@@ -10,9 +10,16 @@ interface VideoChaptersProps {
   videoId: string;
   ownerId: string;
   onSeek?: (seconds: number) => void;
+  currentSeconds?: number;
 }
 
-const VideoChapters = ({ chapters, videoId, ownerId, onSeek }: VideoChaptersProps) => {
+const VideoChapters = ({
+  chapters,
+  videoId,
+  ownerId,
+  onSeek,
+  currentSeconds = 0,
+}: VideoChaptersProps) => {
   const { data: session } = authClient.useSession();
   const isOwner = session?.user.id === ownerId;
 
@@ -57,8 +64,13 @@ const VideoChapters = ({ chapters, videoId, ownerId, onSeek }: VideoChaptersProp
     <div className="chapters-container">
       {localChapters.length > 0 ? (
         <ul className="chapters-list">
-          {localChapters.map((chapter, i) => (
-            <li key={i} className="chapter-item">
+          {localChapters.map((chapter, i) => {
+            const next = localChapters[i + 1];
+            const isActive =
+              currentSeconds >= chapter.timestamp &&
+              (!next || currentSeconds < next.timestamp);
+            return (
+            <li key={i} className={isActive ? "chapter-item chapter-active" : "chapter-item"}>
               <button
                 className="chapter-seek-btn"
                 onClick={() => onSeek?.(chapter.timestamp)}
@@ -76,7 +88,8 @@ const VideoChapters = ({ chapters, videoId, ownerId, onSeek }: VideoChaptersProp
                 </button>
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : (
         <p className="text-sm text-gray-100 py-2">No chapters yet. Add one below.</p>

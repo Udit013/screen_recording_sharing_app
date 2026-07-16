@@ -24,6 +24,9 @@ const VideoComments = ({
   const [loaded, setLoaded] = useState(false);
   const [draft, setDraft] = useState("");
   const [atTimestamp, setAtTimestamp] = useState(true);
+  // Captured when the composer gains focus, so the label shows the moment
+  // the viewer intended to comment on rather than a stale render-time value.
+  const [capturedTs, setCapturedTs] = useState<number | null>(null);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyDraft, setReplyDraft] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -52,11 +55,14 @@ const VideoComments = ({
   const handlePost = () => {
     const text = draft.trim();
     if (!text) return;
-    const ts = atTimestamp ? Math.floor(getCurrentTime?.() ?? 0) : null;
+    const ts = atTimestamp
+      ? capturedTs ?? Math.floor(getCurrentTime?.() ?? 0)
+      : null;
     startTransition(async () => {
       const created = await addComment(videoId, text, ts, null);
       setComments((prev) => [...prev, created]);
       setDraft("");
+      setCapturedTs(null);
     });
   };
 
@@ -82,8 +88,6 @@ const VideoComments = ({
 
   const canDelete = (c: CommentWithUser) =>
     session?.user.id === c.userId || session?.user.id === ownerId;
-
-  const currentTs = Math.floor(getCurrentTime?.() ?? 0);
 
   const renderComment = (c: CommentWithUser, isReply = false) => (
     <li key={c.id} className={isReply ? "comment reply" : "comment"}>
@@ -167,6 +171,11 @@ const VideoComments = ({
             placeholder="Add a comment…"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onFocus={() => {
+              if (capturedTs === null) {
+                setCapturedTs(Math.floor(getCurrentTime?.() ?? 0));
+              }
+            }}
             rows={2}
           />
           <div className="comment-composer-row">
@@ -177,7 +186,9 @@ const VideoComments = ({
                 onChange={(e) => setAtTimestamp(e.target.checked)}
               />
               <span>
-                at {formatDuration(currentTs) || "0:00"}
+                {capturedTs !== null
+                  ? `at ${formatDuration(capturedTs) || "0:00"}`
+                  : "at current time"}
               </span>
             </label>
             <button

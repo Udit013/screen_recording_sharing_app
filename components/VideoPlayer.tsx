@@ -111,6 +111,17 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       else v.pause();
     }, []);
 
+    // On touch devices the first tap while controls are hidden should reveal
+    // them (like YouTube/Loom), not immediately pause playback.
+    const handleVideoClick = useCallback(() => {
+      setShowSpeedMenu(false);
+      if (playing && !controlsVisible) {
+        pokeControls();
+        return;
+      }
+      togglePlay();
+    }, [playing, controlsVisible, pokeControls, togglePlay]);
+
     const seekBy = useCallback((delta: number) => {
       const v = videoRef.current;
       if (!v) return;
@@ -366,7 +377,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           src={videoUrl}
           preload="metadata"
           playsInline
-          onClick={togglePlay}
+          onClick={handleVideoClick}
           onDoubleClick={toggleFullscreen}
           onLoadedMetadata={handleLoadedMetadata}
           onCanPlay={() => onReady?.()}
@@ -399,7 +410,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           </button>
         )}
 
-        <div className="player-controls" aria-hidden={!controlsVisible && playing}>
+        <div className="player-controls">
           {/* Seek track */}
           <div
             ref={trackRef}
