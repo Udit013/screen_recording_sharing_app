@@ -1252,3 +1252,9 @@
   .player-controls { padding: 20px 8px 6px; }
   .player-time { font-size: 0.72rem; }
 }
+
+.studio-hint-sub {
+  display: inline-block; margin-top: 0.5rem;
+  font-size: 0.8rem; color: #6c6685;
+}
+.studio-hint-sub strong { color: #ff4393; }

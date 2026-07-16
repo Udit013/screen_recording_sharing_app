@@ -200,6 +200,12 @@ const RecordScreen = () => {
                 <p className="studio-hint">
                   Choose your sources, then hit Record. You&apos;ll get a 3-second
                   countdown.
+                  <br />
+                  <span className="studio-hint-sub">
+                    Tip: pick <strong>Entire Screen</strong> in the share dialog
+                    if you want to switch tabs or apps while recording — a
+                    single browser tab records only that tab.
+                  </span>
                 </p>
               )}
             </section>

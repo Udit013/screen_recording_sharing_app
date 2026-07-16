@@ -71,10 +71,15 @@ export const getMediaStreams = async (
   withMic: boolean,
   withCamera: boolean
 ): Promise<MediaStreams> => {
+  // Chromium picker hints (ignored elsewhere): sort "Entire Screen" first,
+  // hide this app's own tab from the picker, and let the user switch which
+  // tab is shared mid-recording. Not yet in TS DOM types, hence the cast.
   const displayStream = await navigator.mediaDevices.getDisplayMedia({
-    video: DEFAULT_VIDEO_CONFIG,
+    video: { ...DEFAULT_VIDEO_CONFIG, displaySurface: "monitor" },
     audio: true,
-  });
+    selfBrowserSurface: "exclude",
+    surfaceSwitching: "include",
+  } as DisplayMediaStreamOptions);
 
   const hasDisplayAudio = displayStream.getAudioTracks().length > 0;
 

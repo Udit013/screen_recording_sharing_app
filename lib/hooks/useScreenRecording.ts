@@ -16,6 +16,25 @@ import {
 const PIP_SIZES: Record<PipSize, number> = { sm: 160, md: 240, lg: 320 };
 const PIP_MARGIN = 24;
 
+// requestAnimationFrame is suspended entirely while the tab is hidden, which
+// would freeze the canvas compositor the moment the user switches tabs.
+// Worker timers are not throttled that way, so a tiny inline worker drives
+// the draw loop at ~30fps regardless of tab visibility.
+function createTickerWorker(onTick: () => void): Worker | null {
+  if (typeof Worker === "undefined") return null;
+  try {
+    const src = `let id=null;onmessage=(e)=>{if(e.data==="start"&&id===null){id=setInterval(()=>postMessage(0),33);}else if(e.data==="stop"&&id!==null){clearInterval(id);id=null;}};`;
+    const worker = new Worker(
+      URL.createObjectURL(new Blob([src], { type: "application/javascript" }))
+    );
+    worker.onmessage = onTick;
+    worker.postMessage("start");
+    return worker;
+  } catch {
+    return null;
+  }
+}
+
 // Draws `video` into the destination rect with cover-fit (center crop, no
 // distortion), matching how Loom renders the camera bubble.
 function drawCover(
@@ -55,6 +74,7 @@ export const useScreenRecording = () => {
   const pausedTotalRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const tickerWorkerRef = useRef<Worker | null>(null);
   const tickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const transcriberRef = useRef<Transcriber | null>(null);
 
@@ -82,6 +102,11 @@ export const useScreenRecording = () => {
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
+    }
+    if (tickerWorkerRef.current) {
+      tickerWorkerRef.current.postMessage("stop");
+      tickerWorkerRef.current.terminate();
+      tickerWorkerRef.current = null;
     }
     stopTicker();
     transcriberRef.current?.stop();
@@ -192,10 +217,21 @@ export const useScreenRecording = () => {
             ctx.strokeStyle = "#ffffff";
             ctx.lineWidth = 4;
             ctx.stroke();
-
-            animFrameRef.current = requestAnimationFrame(draw);
           };
-          draw();
+
+          // Worker-driven ticks keep compositing while this tab is hidden;
+          // fall back to a rAF loop if workers are unavailable.
+          const worker = createTickerWorker(draw);
+          if (worker) {
+            tickerWorkerRef.current = worker;
+          } else {
+            const rafLoop = () => {
+              if (!running) return;
+              draw();
+              animFrameRef.current = requestAnimationFrame(rafLoop);
+            };
+            rafLoop();
+          }
 
           const canvasStream = canvas.captureStream(30) as ExtendedMediaStream;
           audioContextRef.current = new AudioContext();
@@ -222,6 +258,7 @@ export const useScreenRecording = () => {
 
           displayStream.getVideoTracks()[0]?.addEventListener("ended", () => {
             running = false;
+            tickerWorkerRef.current?.postMessage("stop");
           });
         } else {
           const combinedStream = new MediaStream() as ExtendedMediaStream;
@@ -321,6 +358,11 @@ export const useScreenRecording = () => {
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
+    }
+    if (tickerWorkerRef.current) {
+      tickerWorkerRef.current.postMessage("stop");
+      tickerWorkerRef.current.terminate();
+      tickerWorkerRef.current = null;
     }
     // Close the paused gap so the final duration is correct.
     if (pausedAtRef.current) {
