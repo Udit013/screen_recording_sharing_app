@@ -215,11 +215,6 @@ declare global {
     _originalStreams?: MediaStream[];
   }
 
-  interface RecordingHandlers {
-    onDataAvailable: (e: BlobEvent) => void;
-    onStop: () => void;
-  }
-
   interface ShareTokenResult {
     token: string;
     expiry: Date;

@@ -1,8 +1,6 @@
 export const MAX_VIDEO_SIZE = 500 * 1024 * 1024;
 export const MAX_THUMBNAIL_SIZE = 10 * 1024 * 1024;
 
-export const emojis = ["😂", "😍", "👍"];
-
 export const filterOptions = [
   "Most Viewed",
   "Most Recent",
@@ -16,11 +14,6 @@ export const ICONS = {
   record: "/assets/icons/record.svg",
   close: "/assets/icons/close.svg",
   upload: "/assets/icons/upload.svg",
-};
-
-export const initialVideoState = {
-  isLoaded: false,
-  hasIncrementedView: false,
 };
 
 export const infos = ["transcript", "ai summary", "chapters", "notes", "metadata"];

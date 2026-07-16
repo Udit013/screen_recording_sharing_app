@@ -24,12 +24,6 @@ export const updateURLParams = (
   return `${basePath}?${params.toString()}`;
 };
 
-export const getEnv = (key: string): string => {
-  const value = process.env[key];
-  if (!value) throw new Error(`Missing required env: ${key}`);
-  return value;
-};
-
 export const getOrderByClause = (filter?: string) => {
   switch (filter) {
     case "Most Viewed":
@@ -121,21 +115,6 @@ export const createAudioMixer = (
   if (micStream) mix(micStream, 1.5);
 
   return destination;
-};
-
-export const setupRecording = (
-  stream: MediaStream,
-  handlers: RecordingHandlers
-): MediaRecorder => {
-  let recorder: MediaRecorder;
-  try {
-    recorder = new MediaRecorder(stream, DEFAULT_RECORDING_CONFIG);
-  } catch {
-    recorder = new MediaRecorder(stream);
-  }
-  recorder.ondataavailable = handlers.onDataAvailable;
-  recorder.onstop = handlers.onStop;
-  return recorder;
 };
 
 export const getVideoDuration = (url: string): Promise<number | null> =>
