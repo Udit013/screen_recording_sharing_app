@@ -56,24 +56,6 @@ declare global {
     text: string;
   }
 
-  interface NavbarProps {
-    user: User | undefined;
-  }
-
-  interface SearchResult {
-    video: {
-      id: string;
-      videoId: string;
-      title: string;
-      thumbnailUrl: string;
-    };
-    user: {
-      id: string;
-      name: string | null;
-      image: string | null;
-    } | null;
-  }
-
   interface VideoCardProps {
     id: string;
     title: string;
@@ -127,10 +109,6 @@ declare global {
     visibility: Visibility;
     duration?: number | null;
   }
-
-  type ApiResponse<T> =
-    | ({ success: true; error: null } & T)
-    | { success: false; error: string };
 
   interface VideoWithUserResult {
     video: {

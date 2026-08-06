@@ -698,7 +698,7 @@ export const processVideoAI = withError(async (videoId: string) => {
 
   const [existing] = await db.select().from(videos).where(eq(videos.videoId, videoId));
   if (!existing) return { processed: false };
-  if (existing.aiSummary && existing.processingStatus === "ready") return { alreadyProcessed: true };
+  if (existing.processingStatus === "ready") return { alreadyProcessed: true };
 
   await db.update(videos).set({ processingStatus: "processing", ... }).where(...);
 
@@ -707,14 +707,14 @@ export const processVideoAI = withError(async (videoId: string) => {
       ? existing.transcript
       : `Title: ${existing.title}\nDescription: ${existing.description}\nTags: ${(existing.tags ?? []).join(", ")}`;
 
-    const aiResult = await analyzeVideoContent(context);
-
-    let aiChapters: Chapter[] | null = null;
     const hasManualChapters = (existing.chapters?.length ?? 0) > 0;
-    if (!hasManualChapters && (existing.transcriptSegments ?? []).length > 0) {
-      const timed = existing.transcriptSegments.map(s => `[${vttTimeToSeconds(s.time)}] ${s.text}`).join("\n");
-      aiChapters = await generateChapters(timed, existing.duration ?? 0);
-    }
+    const wantsChapters = !hasManualChapters && (existing.transcriptSegments ?? []).length > 0;
+
+    // Independent calls — run concurrently, not back to back.
+    const [aiResult, aiChapters] = await Promise.all([
+      analyzeVideoContent(context),
+      wantsChapters ? generateChapters(timedTranscript, existing.duration ?? 0) : Promise.resolve(null),
+    ]);
 
     await db.update(videos).set({
       aiSummary: aiResult?.summary ?? existing.aiSummary ?? null,
@@ -1039,7 +1039,14 @@ This is a place where precision matters for an interview: this app does **not** 
    ```
    ```ts
    // lib/actions/video.ts
-   await db.update(videos).set({ views: sql`${videos.views} + 1` }).where(eq(videos.videoId, videoId));
+   // Visibility is folded into the UPDATE: a video the caller may not view
+   // matches zero rows, with no extra round trip on this hot path.
+   await db.update(videos).set({ views: sql`${videos.views} + 1` })
+     .where(and(eq(videos.videoId, videoId), or(
+       eq(videos.visibility, "public"),
+       currentUserId ? eq(videos.userId, currentUserId) : undefined,
+       and(isNotNull(videos.shareToken), gt(videos.shareTokenExpiry, new Date())),
+     )));
    ```
    This is what's shown as the plain "views" count on every video card — fast, cheap, and all that's needed for a simple headline number.
 
@@ -1395,7 +1402,7 @@ The largest action file — the core video CRUD plus AI processing, sharing, and
 | `getVideoById(videoId)` | Single video, respecting visibility rules | Public/owner-conditional read |
 | `getVideoByShareToken(token)` | Single video via a valid, unexpired share token | Public read (token *is* the auth) |
 | `getAllVideosByUser(userId, query, sort)` | A user's channel page videos | Public/owner-conditional read |
-| `incrementVideoViews(videoId)` | `+1` on the views counter | No auth required (anonymous viewers count too) |
+| `incrementVideoViews(videoId)` | `+1` on the views counter | No session required (anonymous share-link viewers count), but the video must be public, owned by the caller, or have a live share link |
 | `processVideoAI(videoId)` | Runs the Gemini summary/chapters pipeline | Requires session |
 | `saveVideoTranscript(videoId, segments)` | Persists a recording's captured transcript | Requires session + ownership |
 | `updateVideoVisibility(videoId, visibility)` | Change public/private/link-only | Requires session + ownership |
@@ -1530,6 +1537,15 @@ This section consolidates security decisions that are scattered contextually thr
 1. **`middleware.ts`** — blanket gate: no session, no access to any page except sign-in/share/static assets.
 2. **Server Action-level checks** — every mutating action re-derives the session server-side (`getSessionUserId()`) and compares the resulting user id against the row's `userId`/`ownerId` column in the same database query (`and(eq(table.id, id), eq(table.userId, userId))`) — never trusting a client-supplied "I am the owner" flag.
 3. **Query-level visibility filtering** — read operations (`getVideoById`, `getAllVideos`) bake the public/private/owner check directly into the `WHERE` clause, so a private video never even leaves the database for an unauthorized reader — there's no "fetch then check in JavaScript" step that could be forgotten.
+4. **`lib/authz.ts` — cross-feature video access checks.** Ownership scoping (layer 2) protects the *video* row itself, but features that hang off a video — comments, notes, playlist membership, watch events, AI processing — write to their *own* tables, so an ownership-scoped `WHERE` on those tables proves nothing about whether the caller may see the underlying video. This module centralizes that question:
+
+   | Helper | Rule | Used by |
+   |---|---|---|
+   | `canViewVideo(access, userId)` | public, or caller owns it — mirrors `getVideoById` | `getComments` |
+   | `assertVideoReadable(videoId, userId)` | throws unless readable; same error for "missing" and "forbidden" so ids can't be probed | `addComment`, `createNote`, `addVideoToPlaylist`, `processVideoAI` |
+   | `assertVideoCountable(videoId, userId)` | readable **or** reachable via a live share link — deliberately looser, because anonymous share-link viewers generate legitimate analytics | `recordWatch` |
+
+   The looser third rule exists because visibility and *countability* genuinely differ: a `link-only` video is not browsable by a stranger, but a stranger holding a valid share link is a real viewer whose watch time should be recorded.
 
 ### 22.2 Input validation at every network boundary
 
@@ -1853,7 +1869,7 @@ See [§24.3](#243-hydration). Concretely: the home page's video grid HTML is ful
 See [§24.6](#246-rest-apis-vs-server-actions). Because this app has exactly one client (its own Next.js frontend), there's no need for a general-purpose API contract that other consumers would rely on — Server Actions eliminate an entire layer of route definitions and request/response parsing boilerplate that would otherwise be needed for zero actual benefit in this app's context.
 
 **Q: Walk me through what happens when someone clicks "Delete" on a video.**
-`VideoDetailHeader`'s `handleDelete` shows a `confirm()` dialog; on confirm, calls `deleteVideo(videoId)` — the Server Action deletes the Cloudinary video asset, deletes the Cloudinary thumbnail asset (both best-effort, `.catch(() => {})`), then deletes the database row *scoped to the requesting user's id* (`and(eq(videos.videoId, videoId), eq(videos.userId, userId))`) — so a non-owner's delete call matches zero rows and silently does nothing. Every child row (comments, notes, view events, playlist memberships) is auto-removed by Postgres's `onDelete: "cascade"` foreign keys.
+`VideoDetailHeader`'s `handleDelete` shows a `confirm()` dialog; on confirm, calls `deleteVideo(videoId)`. The Server Action **first** confirms the caller actually owns the row, then deletes the database row *scoped to the requesting user's id* (`and(eq(videos.videoId, videoId), eq(videos.userId, userId))`), and only then removes the Cloudinary assets (best-effort, in parallel). Ordering matters here and is worth calling out: the row delete is ownership-scoped but the CDN delete is not, so destroying assets first would let any signed-in user wipe another user's media by id while that user's row survived, leaving a page pointing at a dead asset. Every child row (comments, notes, view events, playlist memberships) is auto-removed by Postgres's `onDelete: "cascade"` foreign keys.
 
 **Q: Why does the search feature strip punctuation from the title comparison?**
 See [§14.1](#141-the-search-query). Real users don't reliably remember or type exact punctuation — a search for "nextjs" should match a title like "Next.js Tutorial." Stripping hyphens/periods/spaces from both the stored title and the incoming query before comparing closes that gap.

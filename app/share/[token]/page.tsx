@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import type { Metadata } from "next";
+import { cache } from "react";
 import { getVideoByShareToken } from "@/lib/actions/video";
 import { VideoPlayer } from "@/components";
 import { daysAgo, formatDuration } from "@/lib/utils";
@@ -11,13 +12,20 @@ type SharePageProps = {
   params: Promise<{ token: string }>;
 };
 
+// `generateMetadata` and the page body both need this video, and Next.js runs
+// them in the same request. React's `cache` memoizes per-request, so the token
+// lookup hits the database once instead of twice on every share-link view.
+const getSharedVideo = cache(async (token: string) =>
+  getVideoByShareToken(token)
+);
+
 // Rich link previews when a share URL is pasted into Slack/WhatsApp/Twitter.
 // Share pages are token-gated, so they are excluded from search indexing.
 export async function generateMetadata({
   params,
 }: SharePageProps): Promise<Metadata> {
   const { token } = await params;
-  const result = await getVideoByShareToken(token);
+  const result = await getSharedVideo(token);
 
   if (!result) {
     return { title: "Shared video", robots: { index: false, follow: false } };
@@ -49,7 +57,7 @@ export async function generateMetadata({
 
 const SharePage = async ({ params }: SharePageProps) => {
   const { token } = await params;
-  const result = await getVideoByShareToken(token);
+  const result = await getSharedVideo(token);
 
   if (!result) {
     return (

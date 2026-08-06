@@ -44,15 +44,25 @@ const AddToPlaylist = ({ videoId }: AddToPlaylistProps) => {
 
   const toggle = (playlistId: string) => {
     const isMember = memberIds.has(playlistId);
-    setMemberIds((prev) => {
-      const next = new Set(prev);
-      if (isMember) next.delete(playlistId);
-      else next.add(playlistId);
-      return next;
-    });
+
+    const setMembership = (member: boolean) =>
+      setMemberIds((prev) => {
+        const next = new Set(prev);
+        if (member) next.add(playlistId);
+        else next.delete(playlistId);
+        return next;
+      });
+
+    setMembership(!isMember); // optimistic
     startTransition(async () => {
-      if (isMember) await removeVideoFromPlaylist(playlistId, videoId);
-      else await addVideoToPlaylist(playlistId, videoId);
+      try {
+        if (isMember) await removeVideoFromPlaylist(playlistId, videoId);
+        else await addVideoToPlaylist(playlistId, videoId);
+      } catch {
+        // Roll back so the checkbox can't claim a membership the server
+        // rejected (e.g. the video is no longer readable by this user).
+        setMembership(isMember);
+      }
     });
   };
 

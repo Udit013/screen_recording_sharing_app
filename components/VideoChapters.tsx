@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { saveChapters } from "@/lib/actions/video";
 import { formatDuration } from "@/lib/utils";
 import { authClient } from "@/lib/auth-client";
@@ -24,6 +24,16 @@ const VideoChapters = ({
   const isOwner = session?.user.id === ownerId;
 
   const [localChapters, setLocalChapters] = useState<Chapter[]>(chapters ?? []);
+
+  // `useState` only reads its initial value on first mount, so AI-generated
+  // chapters arriving after `processVideoAI` finishes would never appear until
+  // a full page reload. Re-sync whenever the parent supplies a new array.
+  // Local edits don't trigger this: they change `localChapters` only, leaving
+  // the `chapters` prop reference untouched.
+  useEffect(() => {
+    setLocalChapters(chapters ?? []);
+  }, [chapters]);
+
   const [newTitle, setNewTitle] = useState("");
   const [newTimestamp, setNewTimestamp] = useState("");
   const [isAdding, setIsAdding] = useState(false);

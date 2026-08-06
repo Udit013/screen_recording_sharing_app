@@ -6,6 +6,7 @@ import {
   uuid,
   integer,
   jsonb,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
@@ -90,7 +91,14 @@ export const videos = pgTable("videos", {
     .default("idle"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (t) => [
+  // Profile page and channel analytics both filter by owner.
+  index("idx_videos_user").on(t.userId),
+  // Home page: WHERE visibility = 'public' ORDER BY created_at DESC.
+  index("idx_videos_visibility_created").on(t.visibility, t.createdAt),
+  // Default ordering for every listing.
+  index("idx_videos_created").on(t.createdAt),
+]);
 
 // ── Timestamped personal notes on a video ──────────────────────────────────
 export const notes = pgTable("notes", {
@@ -117,7 +125,7 @@ export const playlists = pgTable("playlists", {
   description: text("description"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (t) => [index("idx_playlists_user").on(t.userId)]);
 
 export const playlistVideos = pgTable("playlist_videos", {
   id: uuid("id").primaryKey().defaultRandom(),
