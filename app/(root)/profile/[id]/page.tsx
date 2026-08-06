@@ -16,7 +16,7 @@ const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
   const { id } = await params;
   const { query, filter } = await searchParams;
 
-  const { user, videos } = await getAllVideosByUser(id, query, filter);
+  const { user, videos, count } = await getAllVideosByUser(id, query, filter);
   if (!user) redirect("/404");
 
   const session = await auth.api.getSession({ headers: await headers() });
@@ -25,7 +25,7 @@ const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
   return (
     <main className="wrapper page">
       <SharedHeader
-        subHeader={user?.email}
+        subHeader={`${count} ${count === 1 ? "video" : "videos"}`}
         title={user?.name}
         userImg={user?.image ?? ""}
       />

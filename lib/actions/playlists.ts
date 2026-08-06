@@ -2,11 +2,12 @@
 
 import { db } from "@/drizzle/db";
 import { playlists, playlistVideos, videos } from "@/drizzle/schema";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { requiredString, optionalString, LIMITS } from "@/lib/validate";
+import { assertVideoReadable } from "@/lib/authz";
 
 const getSessionUserId = async (): Promise<string> => {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -57,6 +58,11 @@ export async function getPlaylist(playlistId: string): Promise<{
     .where(eq(playlists.id, playlistId));
   if (!pl) return null;
 
+  // A playlist may contain videos whose visibility has since changed, and the
+  // playlist id alone is not an access grant. Filter members to what this
+  // viewer may actually see, so an unlisted video's title and thumbnail are
+  // never exposed through somebody else's collection.
+  const viewerId = session?.user.id;
   const items = await db
     .select({
       id: playlistVideos.id,
@@ -68,7 +74,15 @@ export async function getPlaylist(playlistId: string): Promise<{
     })
     .from(playlistVideos)
     .innerJoin(videos, eq(videos.videoId, playlistVideos.videoId))
-    .where(eq(playlistVideos.playlistId, playlistId))
+    .where(
+      and(
+        eq(playlistVideos.playlistId, playlistId),
+        or(
+          eq(videos.visibility, "public"),
+          viewerId ? eq(videos.userId, viewerId) : undefined
+        )
+      )
+    )
     .orderBy(playlistVideos.position, playlistVideos.addedAt);
 
   return {
@@ -139,6 +153,9 @@ export async function addVideoToPlaylist(
 ): Promise<void> {
   const userId = await getSessionUserId();
   await assertOwner(playlistId, userId);
+  // Owning the playlist is not enough — the video being added must also be one
+  // this user is allowed to see.
+  await assertVideoReadable(videoId, userId);
 
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)` })

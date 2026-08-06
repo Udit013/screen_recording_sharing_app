@@ -4,7 +4,7 @@ import { db } from "@/drizzle/db";
 import { videos, user } from "@/drizzle/schema";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, gt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, or, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { doesContentMatch, getOrderByClause } from "@/lib/utils";
 import { getSignedUploadParams, deleteCloudinaryResource } from "@/lib/cloudinary";
@@ -16,6 +16,7 @@ import {
   clampInt,
   LIMITS,
 } from "@/lib/validate";
+import { assertVideoReadable } from "@/lib/authz";
 
 const revalidatePaths = (paths: string[]) =>
   paths.forEach((path) => revalidatePath(path));
@@ -75,6 +76,17 @@ export const saveVideoDetails = withError(async (videoDetails: VideoDetails) => 
     !videoDetails.thumbnailUrl.startsWith(cloudPrefix)
   ) {
     throw new Error("Media URLs must come from the configured CDN");
+  }
+
+  // Both assets are uploaded under a public_id derived from this videoId, so
+  // both URLs must reference it. Without this, a caller could save a new row
+  // pointing at an asset somebody else uploaded — re-publishing another user's
+  // video under their own account.
+  if (
+    !videoDetails.videoUrl.includes(videoDetails.videoId) ||
+    !videoDetails.thumbnailUrl.includes(videoDetails.videoId)
+  ) {
+    throw new Error("Media URLs do not belong to this video");
   }
 
   const title = requiredString(videoDetails.title, "Title", LIMITS.title);
@@ -189,8 +201,11 @@ export const getAllVideosByUser = withError(async (
   const currentUserId = session?.user.id;
   const isOwner = userIdParameter === currentUserId;
 
+  // Deliberately excludes `email`: profile pages are viewable by anyone, and
+  // this payload is rendered client-side, so selecting the address here would
+  // publish every user's email to any visitor.
   const [userInfo] = await db
-    .select({ id: user.id, name: user.name, image: user.image, email: user.email })
+    .select({ id: user.id, name: user.name, image: user.image })
     .from(user)
     .where(eq(user.id, userIdParameter));
 
@@ -212,10 +227,31 @@ export const getAllVideosByUser = withError(async (
 // ─── Analytics ─────────────────────────────────────────────────────────────
 
 export const incrementVideoViews = withError(async (videoId: string) => {
+  const session = await auth.api.getSession({ headers: await headers() });
+  const currentUserId = session?.user.id;
+
+  // The visibility rule is folded into the UPDATE rather than run as a
+  // separate SELECT, so this stays a single round trip on a hot path. A video
+  // the caller may not view simply matches zero rows.
+  //
+  // An active share link also qualifies: anonymous viewers arriving through
+  // /share/[token] are legitimate views of an otherwise unlisted video.
   await db
     .update(videos)
     .set({ views: sql`${videos.views} + 1`, updatedAt: new Date() })
-    .where(eq(videos.videoId, videoId));
+    .where(
+      and(
+        eq(videos.videoId, videoId),
+        or(
+          eq(videos.visibility, "public"),
+          currentUserId ? eq(videos.userId, currentUserId) : undefined,
+          and(
+            isNotNull(videos.shareToken),
+            gt(videos.shareTokenExpiry, new Date())
+          )
+        )
+      )
+    );
   revalidatePaths([`/video/${videoId}`]);
   return {};
 });
@@ -223,9 +259,11 @@ export const incrementVideoViews = withError(async (videoId: string) => {
 // ─── AI Processing ─────────────────────────────────────────────────────────
 
 export const processVideoAI = withError(async (videoId: string) => {
-  // Requires a signed-in user: this action spends Gemini quota, so it must
-  // not be invocable anonymously. Any authenticated viewer may trigger it.
-  await getSessionUserId();
+  // Requires a signed-in user AND that the user can actually see this video:
+  // this action spends Gemini quota, so it must not be usable anonymously or
+  // pointed at somebody else's private video.
+  const userId = await getSessionUserId();
+  await assertVideoReadable(videoId, userId);
 
   const [existing] = await db
     .select()
@@ -233,7 +271,10 @@ export const processVideoAI = withError(async (videoId: string) => {
     .where(eq(videos.videoId, videoId));
 
   if (!existing) return { processed: false };
-  if (existing.aiSummary && existing.processingStatus === "ready") {
+  // Gate on status alone. Gating on `aiSummary` too meant that when Gemini is
+  // unconfigured (or returned nothing) the summary stayed null, so every
+  // subsequent view re-ran the whole pipeline instead of short-circuiting.
+  if (existing.processingStatus === "ready") {
     return { alreadyProcessed: true };
   }
 
@@ -249,19 +290,27 @@ export const processVideoAI = withError(async (videoId: string) => {
       ? transcript
       : `Title: ${existing.title}\nDescription: ${existing.description}\nTags: ${(existing.tags ?? []).join(", ")}`;
 
-    const aiResult = await analyzeVideoContent(context);
-
-    // Generate AI chapters from the timed transcript when available and the
-    // owner hasn't already added manual chapters.
-    let aiChapters: Chapter[] | null = null;
+    // Chapters are generated from the timed transcript, but only when one
+    // exists and the owner hasn't already added chapters by hand.
     const segments = existing.transcriptSegments ?? [];
     const hasManualChapters = (existing.chapters?.length ?? 0) > 0;
-    if (!hasManualChapters && segments.length > 0) {
-      const timed = segments
-        .map((s) => `[${vttTimeToSeconds(s.time)}] ${s.text}`)
-        .join("\n");
-      aiChapters = await generateChapters(timed, existing.duration ?? 0);
-    }
+    const wantsChapters = !hasManualChapters && segments.length > 0;
+
+    // The two Gemini calls are independent, so they run concurrently rather
+    // than back to back — roughly halving total AI latency on a video that
+    // gets both. Both helpers swallow their own errors and resolve to null,
+    // so Promise.all cannot reject here.
+    const [aiResult, aiChapters] = await Promise.all([
+      analyzeVideoContent(context),
+      wantsChapters
+        ? generateChapters(
+            segments
+              .map((s) => `[${vttTimeToSeconds(s.time)}] ${s.text}`)
+              .join("\n"),
+            existing.duration ?? 0
+          )
+        : Promise.resolve(null),
+    ]);
 
     await db
       .update(videos)
@@ -341,12 +390,27 @@ export const updateVideoVisibility = withError(
 export const deleteVideo = withError(async (videoId: string) => {
   const userId = await getSessionUserId();
 
-  await deleteCloudinaryResource(`snapcast/videos/${videoId}`, "video").catch(() => {});
-  await deleteCloudinaryResource(`snapcast/thumbnails/${videoId}`, "image").catch(() => {});
+  // Ownership MUST be confirmed before touching Cloudinary. The row delete
+  // below is ownership-scoped, but destroying the CDN assets is not — doing it
+  // first would let any signed-in user wipe another user's media by id while
+  // that user's database row (and page) survived, pointing at a dead asset.
+  const [owned] = await db
+    .select({ videoId: videos.videoId })
+    .from(videos)
+    .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
+  if (!owned) throw new Error("Video not found");
 
   await db
     .delete(videos)
     .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
+
+  // Best-effort asset cleanup: the row is already gone, so a CDN failure here
+  // leaves an orphaned file rather than a broken page. The two deletes are
+  // independent, so they run concurrently.
+  await Promise.all([
+    deleteCloudinaryResource(`snapcast/videos/${videoId}`, "video").catch(() => {}),
+    deleteCloudinaryResource(`snapcast/thumbnails/${videoId}`, "image").catch(() => {}),
+  ]);
 
   revalidatePaths(["/", `/video/${videoId}`]);
   return {};

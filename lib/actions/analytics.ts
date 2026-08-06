@@ -6,6 +6,7 @@ import { desc, eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { clampInt, LIMITS } from "@/lib/validate";
+import { assertVideoCountable } from "@/lib/authz";
 
 /**
  * Records a single watch event. Called when a viewer leaves the page or the
@@ -20,6 +21,11 @@ export async function recordWatch(
 ): Promise<void> {
   const session = await auth.api.getSession({ headers: await headers() });
   const viewerId = session?.user.id ?? null;
+
+  // Verify the target before inserting, so this endpoint can't be used to
+  // write arbitrary rows against videos the caller can't see (which would
+  // both pollute another owner's dashboard and grow the table unchecked).
+  await assertVideoCountable(videoId, viewerId);
 
   await db.insert(videoViews).values({
     videoId,

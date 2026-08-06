@@ -6,6 +6,11 @@ import { and, asc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { requiredString, clampInt, LIMITS } from "@/lib/validate";
+import {
+  assertVideoReadable,
+  canViewVideo,
+  loadVideoAccess,
+} from "@/lib/authz";
 
 const getSessionUserId = async (): Promise<string> => {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -14,6 +19,13 @@ const getSessionUserId = async (): Promise<string> => {
 };
 
 export async function getComments(videoId: string): Promise<CommentWithUser[]> {
+  // Comments inherit the video's visibility. Without this check any signed-in
+  // user could read the discussion on somebody else's private video by calling
+  // this action directly with a known video id.
+  const session = await auth.api.getSession({ headers: await headers() });
+  const access = await loadVideoAccess(videoId);
+  if (!access || !canViewVideo(access, session?.user.id ?? null)) return [];
+
   const rows = await db
     .select({
       id: comments.id,
@@ -40,6 +52,9 @@ export async function addComment(
   parentId: string | null
 ): Promise<CommentWithUser> {
   const userId = await getSessionUserId();
+  // Posting requires the same read access as viewing — otherwise a caller
+  // could inject comments onto a private video they cannot open.
+  await assertVideoReadable(videoId, userId);
   const trimmed = requiredString(content, "Comment", LIMITS.noteContent);
 
   // Replies must reference a real top-level comment on the same video.

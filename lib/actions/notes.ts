@@ -7,6 +7,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { requiredString, clampInt, LIMITS } from "@/lib/validate";
+import { assertVideoReadable } from "@/lib/authz";
 
 const getSessionUserId = async (): Promise<string> => {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -31,6 +32,9 @@ export async function createNote(
   content: string
 ): Promise<Note> {
   const userId = await getSessionUserId();
+  // Notes are private, but they still create rows keyed to a video — require
+  // the same read access as viewing it.
+  await assertVideoReadable(videoId, userId);
   const trimmed = requiredString(content, "Note", LIMITS.noteContent);
 
   const [created] = await db
