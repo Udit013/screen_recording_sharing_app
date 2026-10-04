@@ -89,6 +89,10 @@ export const videos = pgTable("videos", {
     .$type<"idle" | "processing" | "ready" | "failed">()
     .notNull()
     .default("idle"),
+  // When the current AI run claimed the row. Used to reclaim a run whose
+  // serverless invocation died mid-flight. Deliberately separate from
+  // updatedAt, which every view bumps.
+  processingStartedAt: timestamp("processing_started_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [

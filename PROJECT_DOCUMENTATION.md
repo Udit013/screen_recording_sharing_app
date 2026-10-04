@@ -300,6 +300,8 @@ Notice two different **id-like columns**: `id` is an internal UUID Postgres gene
 
 **`processingStatus`** exists because AI enrichment (Gemini call) happens *after* the video record is first created, not during. A value of `"idle"` means AI hasn't run yet; `"processing"` while the Gemini call is in flight; `"ready"` once summary/tags/chapters are saved; `"failed"` if the Gemini call threw. The UI polls this implicitly by re-fetching the video after `processVideoAI` resolves — see [§18.1](#181-libactionsvideots).
 
+`processingStartedAt` records when the current run *claimed* the row. It exists because the claim is atomic (see [§8.2](#82-processvideoai--orchestrating-the-ai-step)): the first viewer of a new video wins the claim, and every concurrent viewer sees `"processing"` and backs off instead of starting a duplicate Gemini run. If a serverless invocation dies mid-run, the row would otherwise stay `"processing"` forever, so a claim older than 2 minutes (well above Vercel's 60-second function limit) may be reclaimed. It's a dedicated column rather than `updatedAt` because a modification time must not move when nothing was modified.
+
 #### `notes` — private, per-viewer
 
 ```ts
@@ -694,13 +696,19 @@ Both are guarded by the same pattern: if `process.env.GEMINI_API_KEY` is unset, 
 
 ```ts
 export const processVideoAI = withError(async (videoId: string) => {
-  await getSessionUserId();   // must be signed in — this action spends API quota
+  const userId = await getSessionUserId();   // signed in — this spends API quota
+  await assertVideoReadable(videoId, userId); // ...and only on videos you can see
 
-  const [existing] = await db.select().from(videos).where(eq(videos.videoId, videoId));
-  if (!existing) return { processed: false };
-  if (existing.processingStatus === "ready") return { alreadyProcessed: true };
-
-  await db.update(videos).set({ processingStatus: "processing", ... }).where(...);
+  // Atomic claim: exactly one concurrent caller gets a row back.
+  const [existing] = await db.update(videos)
+    .set({ processingStatus: "processing", processingStartedAt: now })
+    .where(and(eq(videos.videoId, videoId), or(
+      inArray(videos.processingStatus, ["idle", "failed"]),
+      and(eq(videos.processingStatus, "processing"),          // reclaim a dead run
+          or(isNull(videos.processingStartedAt), lt(videos.processingStartedAt, staleBefore))),
+    )))
+    .returning();
+  if (!existing) return { alreadyProcessed: true };  // ready, or another run in flight
 
   try {
     const context = existing.transcript?.trim()

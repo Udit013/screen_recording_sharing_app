@@ -4,7 +4,18 @@ import { db } from "@/drizzle/db";
 import { videos, user } from "@/drizzle/schema";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, gt, isNotNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { doesContentMatch, getOrderByClause } from "@/lib/utils";
 import { getSignedUploadParams, deleteCloudinaryResource } from "@/lib/cloudinary";
@@ -17,6 +28,11 @@ import {
   LIMITS,
 } from "@/lib/validate";
 import { assertVideoReadable } from "@/lib/authz";
+
+// A claimed AI run older than this is assumed dead and may be reclaimed.
+// Comfortably above Vercel's serverless function limit (60s max on Hobby),
+// so a run that is still alive can never be reclaimed out from under itself.
+const PROCESSING_STALE_MS = 2 * 60 * 1000;
 
 const revalidatePaths = (paths: string[]) =>
   paths.forEach((path) => revalidatePath(path));
@@ -238,7 +254,9 @@ export const incrementVideoViews = withError(async (videoId: string) => {
   // /share/[token] are legitimate views of an otherwise unlisted video.
   await db
     .update(videos)
-    .set({ views: sql`${videos.views} + 1`, updatedAt: new Date() })
+    // Intentionally does not touch updatedAt: a view is not an edit, and
+    // bumping it on every view made the column useless as a modification time.
+    .set({ views: sql`${videos.views} + 1` })
     .where(
       and(
         eq(videos.videoId, videoId),
@@ -265,23 +283,39 @@ export const processVideoAI = withError(async (videoId: string) => {
   const userId = await getSessionUserId();
   await assertVideoReadable(videoId, userId);
 
+  // Claim the run atomically. A plain read-then-write let every viewer who
+  // opened a new video during processing start another full Gemini pipeline,
+  // because "processing" was written but never checked. This conditional
+  // UPDATE matches for exactly one caller: Postgres re-evaluates the WHERE
+  // clause for a concurrent UPDATE after the first commits, so later callers
+  // see "processing" and match nothing.
+  //
+  // A run claimed more than PROCESSING_STALE_MS ago is treated as dead (its
+  // serverless invocation timed out or crashed) and may be reclaimed.
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - PROCESSING_STALE_MS);
   const [existing] = await db
-    .select()
-    .from(videos)
-    .where(eq(videos.videoId, videoId));
-
-  if (!existing) return { processed: false };
-  // Gate on status alone. Gating on `aiSummary` too meant that when Gemini is
-  // unconfigured (or returned nothing) the summary stayed null, so every
-  // subsequent view re-ran the whole pipeline instead of short-circuiting.
-  if (existing.processingStatus === "ready") {
-    return { alreadyProcessed: true };
-  }
-
-  await db
     .update(videos)
-    .set({ processingStatus: "processing", updatedAt: new Date() })
-    .where(eq(videos.videoId, videoId));
+    .set({ processingStatus: "processing", processingStartedAt: now })
+    .where(
+      and(
+        eq(videos.videoId, videoId),
+        or(
+          inArray(videos.processingStatus, ["idle", "failed"]),
+          and(
+            eq(videos.processingStatus, "processing"),
+            or(
+              isNull(videos.processingStartedAt),
+              lt(videos.processingStartedAt, staleBefore)
+            )
+          )
+        )
+      )
+    )
+    .returning();
+
+  // Nothing claimed: already "ready", or another caller's run is in flight.
+  if (!existing) return { alreadyProcessed: true };
 
   try {
     // Build context: prefer transcript, else fall back to title/description/tags
@@ -319,6 +353,7 @@ export const processVideoAI = withError(async (videoId: string) => {
         tags: aiResult?.tags?.length ? aiResult.tags : (existing.tags ?? []),
         chapters: aiChapters ?? existing.chapters ?? [],
         processingStatus: "ready",
+        processingStartedAt: null,
         updatedAt: new Date(),
       })
       .where(eq(videos.videoId, videoId));
@@ -328,7 +363,11 @@ export const processVideoAI = withError(async (videoId: string) => {
   } catch {
     await db
       .update(videos)
-      .set({ processingStatus: "failed", updatedAt: new Date() })
+      .set({
+        processingStatus: "failed",
+        processingStartedAt: null,
+        updatedAt: new Date(),
+      })
       .where(eq(videos.videoId, videoId));
     return { processed: false };
   }
