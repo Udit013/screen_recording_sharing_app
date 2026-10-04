@@ -43,10 +43,34 @@ const getSessionUserId = async (): Promise<string> => {
   return session.user.id;
 };
 
+// Full row — for single-video pages that render transcript, chapters, etc.
 const buildVideoWithUserQuery = () =>
   db
     .select({
       video: videos,
+      user: { id: user.id, name: user.name, image: user.image },
+    })
+    .from(videos)
+    .leftJoin(user, eq(videos.userId, user.id));
+
+// Card fields only — for list views. Selecting the full row here pulled the
+// transcript, timed segments and AI summary for every card, none of which a
+// card renders; that payload grows with recording length (up to ~4 MB per
+// video at the app's own limits) while the card stays a few hundred bytes.
+// WHERE clauses can still filter on the unselected columns (search does).
+const buildVideoCardQuery = () =>
+  db
+    .select({
+      video: {
+        id: videos.id,
+        videoId: videos.videoId,
+        title: videos.title,
+        thumbnailUrl: videos.thumbnailUrl,
+        visibility: videos.visibility,
+        views: videos.views,
+        duration: videos.duration,
+        createdAt: videos.createdAt,
+      },
       user: { id: user.id, name: user.name, image: user.image },
     })
     .from(videos)
@@ -170,7 +194,7 @@ export const getAllVideos = withError(async (
   const totalVideos = Number(totalCount || 0);
   const totalPages = Math.ceil(totalVideos / pageSize);
 
-  const videoRecords = await buildVideoWithUserQuery()
+  const videoRecords = await buildVideoCardQuery()
     .where(whereCondition)
     .orderBy(sortFilter ? getOrderByClause(sortFilter) : sql`${videos.createdAt} DESC`)
     .limit(pageSize)
@@ -233,7 +257,7 @@ export const getAllVideosByUser = withError(async (
     searchQuery.trim() ? doesContentMatch(searchQuery) : undefined,
   ].filter((c): c is NonNullable<typeof c> => c !== undefined);
 
-  const userVideos = await buildVideoWithUserQuery()
+  const userVideos = await buildVideoCardQuery()
     .where(and(...conditions))
     .orderBy(sortFilter ? getOrderByClause(sortFilter) : desc(videos.createdAt));
 
