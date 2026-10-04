@@ -55,7 +55,7 @@ evaluated for feasibility; the decisions:
 | Playlists | **Implemented** | Many-to-many (`playlists` ↔ `playlist_videos`) with ownership guards |
 | Channel Analytics | **Implemented** | `video_views` event table → unique viewers, watch time, completion rate, top videos. Anonymous viewers tracked via a localStorage id |
 | Semantic search (pgvector) | **Deferred** | pgvector *is* available on Neon, but per-video embedding generation + a vector column via the HTTP driver adds write-path API cost and bug surface for marginal gain over existing keyword search (title + transcript + summary). Kept keyword search; documented as a clean future swap |
-| Background job queue + cron | **Deferred** | Vercel Hobby cron runs at most **once per day** — useless for processing UX. Processing stays client-triggered with a persisted `processingStatus` field and a live status pill, avoiding Redis/BullMQ/Kafka entirely |
+| Background job queue + cron | **Deferred** | Vercel Hobby cron runs at most **once per day** — useless for processing UX. Processing stays client-triggered with a persisted `processingStatus` field and a live status pill, avoiding Redis/BullMQ/Kafka entirely. An atomic `UPDATE … RETURNING` claim ensures exactly one run per video even when many viewers open it at once, and a run left behind by a crashed function is reclaimable after 2 minutes |
 
 ---
 
@@ -101,7 +101,7 @@ Cloudinary CDN  ←→  Neon PostgreSQL  ←→  Vercel Edge
 | Practice | Implementation |
 |---|---|
 | **CI pipeline** | GitHub Actions on every push/PR: type check → unit tests → production build |
-| **Unit tests** | Vitest suite covering input-validation guards and core utilities |
+| **Unit tests** | 39 Vitest tests covering input-validation guards, access-control predicates, and core utilities |
 | **Strict builds** | Type and lint errors fail the build (no `ignoreBuildErrors`) |
 | **Input validation** | Every server action validates/clamps client input at the network boundary (`lib/validate.ts`) |
 | **Authorization** | Ownership checks on all mutations; signed-URL issuance blocked for other users' assets |
@@ -126,6 +126,7 @@ videos (
   tags text[],
   chapters jsonb,                  -- [{title, timestamp}]
   processing_status text,          -- idle | processing | ready | failed
+  processing_started_at timestamp, -- when the current AI run claimed the row
   share_token text UNIQUE,
   share_token_expiry timestamp,
   views integer DEFAULT 0,

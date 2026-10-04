@@ -289,6 +289,7 @@ export const videos = pgTable("videos", {
   shareTokenExpiry: timestamp("share_token_expiry"),
   chapters: jsonb("chapters").$type<Chapter[]>().default([]),
   processingStatus: text("processing_status").$type<"idle"|"processing"|"ready"|"failed">()...,
+  processingStartedAt: timestamp("processing_started_at"),   // when the current AI run claimed the row
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -391,6 +392,15 @@ db.select({ video: videos, user: { id: user.id, name: user.name, image: user.ima
   .leftJoin(user, eq(videos.userId, user.id));
 ```
 This fetches a video **and** its owner's public profile fields in a single query — avoiding the classic "N+1 query" mistake of fetching videos, then separately fetching each owner one by one.
+
+**Two read shapes, deliberately.** `buildVideoWithUserQuery` selects the *whole* row and is used only by single-video pages (`getVideoById`, `getVideoByShareToken`), which render the transcript, chapters, and summary. List views (`getAllVideos`, `getAllVideosByUser`) use `buildVideoCardQuery`, which selects only the eight fields a `VideoCard` renders:
+```ts
+db.select({
+  video: { id, videoId, title, thumbnailUrl, visibility, views, duration, createdAt },  // from `videos`
+  user: { id: user.id, name: user.name, image: user.image },
+}).from(videos).leftJoin(user, eq(videos.userId, user.id));
+```
+Selecting the full row in a list pulled every video's transcript, timed segments, and AI summary for cards that display none of them. Measured on the current data, that was 3,095 bytes fetched versus 1,123 rendered (2.76×). The absolute difference is small today, but the excess scales with recording length (the app's own limits allow roughly 4 MB of transcript per video) while a card stays a few hundred bytes, and the profile listing isn't paginated. Search still works: a `WHERE` clause can filter on `transcript`/`aiSummary` without those columns being selected.
 
 **Update** (`lib/actions/video.ts`, `updateVideoVisibility`):
 ```ts
@@ -1056,7 +1066,7 @@ This is a place where precision matters for an interview: this app does **not** 
        and(isNotNull(videos.shareToken), gt(videos.shareTokenExpiry, new Date())),
      )));
    ```
-   This is what's shown as the plain "views" count on every video card — fast, cheap, and all that's needed for a simple headline number.
+   This is what's shown as the plain "views" count on every video card — fast, cheap, and all that's needed for a simple headline number. It deliberately does **not** touch `updatedAt`: a view isn't an edit, and bumping the modification time on every view made that column meaningless (it's also why AI processing needed its own `processingStartedAt` column rather than reusing `updatedAt` — see [§4.2](#42-the-complete-schema)).
 
 2. **`video_views`** — a separate table logging **one row per viewing session**, fired once when the viewer leaves the page or the video ends:
    ```ts
@@ -1451,12 +1461,12 @@ Each covered in depth in their respective feature sections ([§10](#10-collabora
 
 | Library | Problem it solves | Files that use it | Simpler alternative considered | Trade-off |
 |---|---|---|---|---|
-| **next** (15.5) | The framework: routing, Server Components, Server Actions, bundling | Everywhere | A plain Vite + React SPA + a separate Express backend | Next.js couples frontend/backend into one deployable but ties the app to Vercel-style hosting conventions |
+| **next** (15.5.27) | The framework: routing, Server Components, Server Actions, bundling | Everywhere | A plain Vite + React SPA + a separate Express backend | Next.js couples frontend/backend into one deployable but ties the app to Vercel-style hosting conventions |
 | **react / react-dom** (19.1) | UI rendering | Everywhere | — (required by Next.js) | — |
 | **typescript** | Compile-time type checking | Every `.ts`/`.tsx` file | Plain JavaScript | Slower to write initially; catches entire classes of bugs (wrong prop shape, typo'd column name) before runtime |
-| **drizzle-orm** + **drizzle-kit** | Type-safe SQL query building + schema migrations | `drizzle/*`, every `lib/actions/*.ts` | Raw SQL strings, or Prisma | Prisma has a friendlier migration UX but a heavier runtime and a separate schema-definition language; Drizzle's schema *is* TypeScript, and its query builder produces close-to-raw SQL |
+| **drizzle-orm** (0.45) + **drizzle-kit** (0.31) | Type-safe SQL query building + schema migrations | `drizzle/*`, every `lib/actions/*.ts` | Raw SQL strings, or Prisma | Prisma has a friendlier migration UX but a heavier runtime and a separate schema-definition language; Drizzle's schema *is* TypeScript, and its query builder produces close-to-raw SQL |
 | **@neondatabase/serverless** | An HTTP-based Postgres driver that works in serverless functions | `drizzle/db.ts`, `drizzle.config.ts` | `pg` (standard Postgres driver, needs a persistent TCP connection pool) | The standard `pg` driver doesn't cooperate well with serverless functions that spin up/down per-request; Neon's HTTP driver avoids connection-pool exhaustion |
-| **better-auth** | Session/OAuth/cookie handling | `lib/auth.ts`, `lib/auth-client.ts`, `middleware.ts` | Hand-rolled sessions + `next-auth`/Auth.js | Rolling your own auth is a well-known security risk (cookie handling, CSRF, token expiry are all easy to get subtly wrong); better-auth is a newer, actively-maintained alternative to Auth.js with first-class Drizzle adapter support |
+| **better-auth** (1.7) | Session/OAuth/cookie handling | `lib/auth.ts`, `lib/auth-client.ts`, `middleware.ts` | Hand-rolled sessions + `next-auth`/Auth.js | Rolling your own auth is a well-known security risk (cookie handling, CSRF, token expiry are all easy to get subtly wrong); better-auth is a newer, actively-maintained alternative to Auth.js with first-class Drizzle adapter support |
 | **cloudinary** (Node SDK) | Signed upload URL generation, asset deletion | `lib/cloudinary.ts` | Self-hosted file storage (e.g., raw S3) | Self-hosting video means building your own transcoding, thumbnailing, and CDN — Cloudinary's free tier includes all of that |
 | **@google/generative-ai** | Calling the Gemini API | `lib/gemini.ts` | OpenAI's API | Gemini 2.0 Flash has a genuinely free tier suitable for this app's low-volume, non-chat usage pattern |
 | **clsx** + **tailwind-merge** | Conditionally joining CSS class name strings, and de-duplicating conflicting Tailwind classes | `lib/utils.ts`'s `cn()` helper, used throughout components | Manual template-string concatenation | Without `tailwind-merge`, passing both a default `"p-2"` and an override `"p-4"` class would leave *both* in the DOM, and CSS's cascade order (not intent) would decide which wins; `tailwind-merge` resolves the conflict correctly by class *meaning* |
@@ -1592,13 +1602,34 @@ export const db: DB = new Proxy({} as DB, { get(_, prop) { return Reflect.get(ge
 ```
 The database client (and, identically, the Cloudinary and Gemini clients) is **not** constructed the instant this module is imported — it's built on first actual use, behind a `Proxy` that intercepts every property access and lazily calls `getDatabase()`. **Why this matters:** Next.js's build process imports every module in the app to statically analyze it, *even for pages that will run dynamically at request time*. If `drizzle(neon(process.env.DATABASE_URL))` ran at module-import time, the production **build** itself would fail in any environment without real database credentials configured (like CI) — see [§21.9](#219-githubworkflowsciyml), where the build step deliberately has no `DATABASE_URL` set at all, and still succeeds because nothing tries to actually connect until a real request comes in.
 
+### 22.5 Dependency vulnerabilities
+
+Third-party code is part of the attack surface. `npm audit` is the check; what matters is whether an advisory is *reachable* in this app, not the raw count.
+
+| Upgrade | Why it applied here |
+|---|---|
+| `next` 15.5.19 → 15.5.27 | Critical unauthenticated RCE in the Image Optimization API with AVIF files. Every thumbnail and avatar in this app goes through `next/image`. Also Server Action DoS/SSRF fixes, and this app's whole backend is Server Actions. |
+| `better-auth` 1.2.7 → 1.7.7 | Fixes for the OAuth callback accepting a mismatched `state`, and account takeover via OAuth auto-linking — both on the Google sign-in path this app uses. Most other advisories were in plugins this app doesn't load (2FA, OIDC provider, magic links). |
+| `drizzle-orm` 0.42 → 0.45.3 | Forced by the above: better-auth 1.7's Drizzle adapter declares a peer dependency on `drizzle-orm ^0.45.2`. Installed without `--force`/`--legacy-peer-deps`, which would have run the adapter against an ORM version it doesn't support. |
+
+Before relying on the auth upgrade, the fields better-auth 1.7 requires (`getAuthTables` for this config) were diffed against the live database: all present, so no migration was needed. Production audit after: **0 critical**. The remaining highs are a `postcss` copy pinned inside Next 15 (fixed only in Next 16) — it processes this repository's own stylesheet at build time, so it isn't reachable from user input — and `brace-expansion` in tooling.
+
+### 22.6 Known remaining risks
+
+| Risk | Status |
+|---|---|
+| **View-count inflation** | `incrementVideoViews` checks *who* may count a view, not *how often*. A legitimate viewer can refresh repeatedly. A real fix needs per-user rate limiting or a dedup window, which needs a shared store the free-tier setup doesn't have. |
+| **Error messages in production** | Next.js documents that it replaces Server Action error messages with a generic message in production builds, so validation errors like "Title must be at most 200 characters" likely surface on the upload form as a generic error. Not reproduced here. The fix is returning `{ error }` results instead of throwing — the `withError` seam exists for exactly that. |
+| **`timestamp without time zone` columns** | Drizzle writes and reads these as UTC, so the app is consistent. But the raw `neon()` driver serializes JS `Date`s in the host's local timezone with an offset, which Postgres silently drops for this column type — any future raw-SQL code comparing timestamps would be off by the host's UTC offset. Migrating to `timestamptz` removes the trap. |
+| **No Content-Security-Policy** | Other security headers are set (§21.3); a CSP needs nonce plumbing for Next's inline scripts, so it isn't a one-line addition. |
+
 ---
 
 ## 23. Testing & CI
 
 ### 23.1 What's actually tested
 
-`tests/validate.test.ts` and `tests/utils.test.ts` cover **pure functions only** — `requiredString`, `optionalString`, `clampInt`, `assertVisibility` (input-validation guards) and `formatDuration`, `generatePagination`, `parseTranscript`, `updateURLParams`, `daysAgo`, `parseTimeToSeconds` (formatting/parsing utilities). These are deliberately chosen because they're **deterministic and side-effect-free** — given the same input, they always produce the same output, with no database, network, or browser API involved, making them fast and trivial to assert against.
+Three suites, 39 tests, all **pure functions**: `tests/validate.test.ts` (`requiredString`, `optionalString`, `clampInt`, `assertVisibility`), `tests/authz.test.ts` (`canViewVideo`, `hasLiveShareLink` — the access predicates from [§22.1](#221-the-layered-authorization-model)), and `tests/utils.test.ts` (`formatDuration`, `generatePagination`, `parseTranscript`, `updateURLParams`, `daysAgo`, `parseTimeToSeconds`). These are deliberately chosen because they're **deterministic and side-effect-free** — given the same input, they always produce the same output, with no database, network, or browser API involved, making them fast and trivial to assert against.
 
 A representative test, showing the *kind* of edge case these guard against:
 ```ts
@@ -1614,6 +1645,8 @@ This test exists precisely *because* `clampInt` is the first line of defense aga
 ### 23.2 What's deliberately *not* tested
 
 There are no tests for React components, Server Actions (which require a live database connection), or the recording/player browser APIs — these would require either a real browser environment (e.g., Playwright) or extensive mocking of `MediaRecorder`/`IndexedDB`/`fetch`, which wasn't judged to be worth the CI-time cost relative to the actual regression risk for a project at this stage. This is a conscious trade-off, not an oversight — see [§26](#26-interview-question-bank) for how to discuss it if asked.
+
+Some database-level behavior was verified with **one-off** integration tests that were run and then deleted, rather than kept in the suite: the AI-processing claim (25 concurrent callers per case, through Drizzle, against a scratch table), the ORM upgrade's query shapes, and better-auth 1.7's session lookup. They weren't kept because the only database is production and CI has no database at all. The natural next step is a free Neon branch as a dedicated test database, which would let those tests run in CI.
 
 ### 23.3 The CI pipeline
 
@@ -1910,7 +1943,7 @@ The individual pieces already scale reasonably well for their tier: Cloudinary h
 For a project at this scope (one team, one deployable, no need for independent scaling of "backend" vs "frontend"), a monolithic Next.js app with Server Actions removes an entire category of complexity — no separate API to version, no CORS configuration, no duplicated type definitions between a frontend and backend repo. Microservices earn their complexity when different parts of a system need genuinely independent deployment cadences, scaling profiles, or team ownership boundaries — none of which apply here.
 
 **"What would you change if you were starting over?"**
-A few honest answers: (1) the `withError` wrapper in `lib/actions/video.ts` should actually catch and normalize errors, rather than being a pass-through seam; (2) the optimistic UI update in `AddToPlaylist.tsx` doesn't roll back on failure — a genuine (if currently low-impact) gap; (3) `parseTimestamp` in `VideoChapters.tsx` duplicates logic that already exists as `parseTimeToSeconds` in `lib/utils.ts` — a small missed consolidation from when the chapters feature was built before the transcript-seeking feature introduced the shared version.
+A few honest answers: (1) the `withError` wrapper in `lib/actions/video.ts` should actually catch and normalize errors, rather than being a pass-through seam; (2) the video detail page is a Client Component that fetches its data through a Server Action *after* hydration, adding a round trip before anything renders — making it a Server Component that passes data to a client player would remove that; (3) `parseTimestamp` in `VideoChapters.tsx` duplicates logic that already exists as `parseTimeToSeconds` in `lib/utils.ts` — a small missed consolidation from when the chapters feature was built before the transcript-seeking feature introduced the shared version.
 
 ---
 
