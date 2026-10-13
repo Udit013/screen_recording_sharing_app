@@ -1,5 +1,6 @@
 import type { ImageProps } from "next/image";
 import type { ReactNode } from "react";
+import type { StoredEdl } from "./drizzle/schema";
 
 declare global {
   interface Chapter {
@@ -130,6 +131,7 @@ declare global {
       shareTokenExpiry: Date | null;
       chapters: Chapter[] | null;
       processingStatus: ProcessingStatus;
+      edl: StoredEdl | null;
       createdAt: Date;
       updatedAt: Date;
     };

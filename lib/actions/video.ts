@@ -8,6 +8,7 @@ import {
   and,
   desc,
   eq,
+  getTableColumns,
   gt,
   inArray,
   isNotNull,
@@ -43,11 +44,17 @@ const getSessionUserId = async (): Promise<string> => {
   return session.user.id;
 };
 
-// Full row — for single-video pages that render transcript, chapters, etc.
+// Everything except `words`: the word-level transcript is only needed by the
+// owner's editor (which loads it separately) and can run to megabytes, so it
+// must not ride along on every viewer's page load.
+const { words: _words, ...videoPageColumns } = getTableColumns(videos);
+
+// Full row (minus words) — for single-video pages that render transcript,
+// chapters, edits, etc.
 const buildVideoWithUserQuery = () =>
   db
     .select({
-      video: videos,
+      video: videoPageColumns,
       user: { id: user.id, name: user.name, image: user.image },
     })
     .from(videos)

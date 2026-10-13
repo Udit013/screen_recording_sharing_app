@@ -8,6 +8,16 @@ import {
   jsonb,
   index,
 } from "drizzle-orm/pg-core";
+import type { Word } from "@/lib/media/align";
+import type { Cut } from "@/lib/media/edl";
+import type { PauseLevel } from "@/lib/media/pauses";
+
+export interface StoredEdl {
+  version: 1;
+  cuts: Cut[];
+  /** Level that generated the "silence" cuts, or null when pauses are kept. */
+  pauseLevel: PauseLevel | null;
+}
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -93,6 +103,12 @@ export const videos = pgTable("videos", {
   // serverless invocation died mid-flight. Deliberately separate from
   // updatedAt, which every view bumps.
   processingStartedAt: timestamp("processing_started_at"),
+  // Word-level transcript from in-browser Whisper, refined against measured
+  // pauses (lib/media/align.ts). Can be large, so list/page queries omit it.
+  words: jsonb("words").$type<Word[]>(),
+  // Non-destructive edit: cuts in SOURCE time (lib/media/edl.ts). The source
+  // asset is never modified; playback and export derive from this.
+  edl: jsonb("edl").$type<StoredEdl>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [
