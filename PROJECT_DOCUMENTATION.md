@@ -1,6 +1,6 @@
 # SnapCast — Complete Technical Documentation
 
-*A screen recording, AI-transcription, and video sharing platform built with Next.js 15.*
+*A screen recorder with a one-take editor (transcript-based cutting, pause tightening, on-device MP4 export), AI transcription, and video sharing, built with Next.js 15.*
 
 This document is the single source of truth for understanding this codebase — from "what problem does this solve" all the way down to "what does line X of file Y do, and why." It's written for four audiences at once: **you**, preparing for a technical interview; **a recruiter**, trying to understand what you built; **a new developer**, onboarding onto this code; and **anyone**, with zero programming background, trying to understand how the app works.
 
@@ -37,6 +37,7 @@ Every claim in this document is grounded in the actual code in this repository a
 25. [Complete User-Action Traces](#25-complete-user-action-traces)
 26. [Interview Question Bank](#26-interview-question-bank)
 27. [Full Walkthrough: A Day in the Life of a Video](#27-full-walkthrough-a-day-in-the-life-of-a-video)
+28. [The One-Take Editor](#28-the-one-take-editor)
 
 ---
 
@@ -49,6 +50,8 @@ Explaining a bug, a workflow, or an idea in a Slack message is slow and lossy. S
 That's what a "Loom-style" tool is: you press record, your screen (and optionally your face, in a little bubble) gets captured, you talk while you work, and a minute later you have a shareable link. The recipient doesn't need an account, doesn't need to download anything — they click and watch.
 
 SnapCast is a from-scratch implementation of that idea, plus the features a *daily-use* tool actually needs once the novelty wears off: **searchable transcripts** (so a 10-minute video isn't a black box), **AI summaries and chapters** (so nobody has to watch the whole thing to know what's in it), **timestamped comments and notes** (so feedback attaches to the exact moment it's about), and **privacy controls** (so not every video is public by default).
+
+Its sharpest feature targets the most common pain of the people who record the most: **re-recording**. The one-take editor ([§28](#28-the-one-take-editor)) lets you record without rehearsing, then tighten every pause and delete flubbed sentences by deleting their words from the transcript. Transcription, audio analysis and MP4 export all run in the browser, so editing costs nothing to operate.
 
 ### 1.2 Who is it built for?
 
@@ -290,6 +293,8 @@ export const videos = pgTable("videos", {
   chapters: jsonb("chapters").$type<Chapter[]>().default([]),
   processingStatus: text("processing_status").$type<"idle"|"processing"|"ready"|"failed">()...,
   processingStartedAt: timestamp("processing_started_at"),   // when the current AI run claimed the row
+  words: jsonb("words").$type<Word[]>(),                     // word-level transcript (editor only, §28.6)
+  edl: jsonb("edl").$type<StoredEdl>(),                      // the edit: source-time cut list (§28.3)
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -1315,7 +1320,10 @@ Next.js file-convention special pages: `error.tsx` is automatically rendered whe
 **Purpose:** Persistent top bar (only rendered for logged-in users, inside `(root)/layout.tsx`). **State:** none of its own beyond what `authClient.useSession()` provides reactively. **Children:** `ImageWithFallback` (for the avatar). **Notable:** the sign-out button calls `authClient.signOut({ fetchOptions: { onSuccess: () => router.push("/sign-in") } })` — the redirect only happens *after* better-auth confirms the sign-out succeeded, not optimistically before.
 
 ### 16.2 `VideoPlayer.tsx`
-Covered exhaustively in [§9](#9-the-custom-video-player).
+Covered exhaustively in [§9](#9-the-custom-video-player). It also plays an owner's edit by skipping cuts, with every control on the edited timeline ([§28.9](#289-live-preview-and-viewer-playback)).
+
+### 16.2a `components/editor/*`
+`Editor.tsx` (orchestration, autosave, keyboard), `Timeline.tsx` (canvas waveform), `TranscriptPane.tsx` (memoized sentence rows) and `ExportDialog.tsx`. See [§28](#28-the-one-take-editor).
 
 ### 16.3 `VideoInfo.tsx`
 **Purpose:** The tabbed panel beside the player (`transcript / ai summary / chapters / notes / metadata`). **Why one component instead of five separate ones directly in the page:** it owns the *shared* state that multiple tabs need — specifically `currentSeconds` (polled from the player, see below), used by both the transcript tab (to highlight the currently-spoken line) and the chapters tab (to highlight the currently-playing chapter). Splitting those into fully separate components would mean either lifting this polling state up to the page (bloating it) or duplicating the polling logic twice.
@@ -1428,6 +1436,8 @@ The largest action file — the core video CRUD plus AI processing, sharing, and
 | `generateShareToken(videoId, days)` | Creates a new random share link | Requires session + ownership |
 | `revokeShareToken(videoId)` | Nulls out the share token | Requires session + ownership |
 | `saveChapters(videoId, chapters)` | Owner-authored manual chapters | Requires session + ownership |
+
+`lib/actions/edit.ts` holds the editor's actions ([§28](#28-the-one-take-editor)): `getEditorData` (owner-only read), `saveWordTranscript` and `saveEdit`, all of which require session + ownership and sanitize their input.
 
 **The shared `withError` wrapper:**
 ```ts
@@ -1621,6 +1631,7 @@ Before relying on the auth upgrade, the fields better-auth 1.7 requires (`getAut
 | **View-count inflation** | `incrementVideoViews` checks *who* may count a view, not *how often*. A legitimate viewer can refresh repeatedly. A real fix needs per-user rate limiting or a dedup window, which needs a shared store the free-tier setup doesn't have. |
 | **Error messages in production** | Next.js documents that it replaces Server Action error messages with a generic message in production builds, so validation errors like "Title must be at most 200 characters" likely surface on the upload form as a generic error. Not reproduced here. The fix is returning `{ error }` results instead of throwing — the `withError` seam exists for exactly that. |
 | **`timestamp without time zone` columns** | Drizzle writes and reads these as UTC, so the app is consistent. But the raw `neon()` driver serializes JS `Date`s in the host's local timezone with an offset, which Postgres silently drops for this column type — any future raw-SQL code comparing timestamps would be off by the host's UTC offset. Migrating to `timestamptz` removes the trap. |
+| **Edited-out material is still in the source file** | Edits are non-destructive: SnapCast skips cuts, but the original Cloudinary URL still holds the full recording ([§28.11](#2811-security-and-validation)). Exporting and re-uploading produces a file without it. |
 | **No Content-Security-Policy** | Other security headers are set (§21.3); a CSP needs nonce plumbing for Next's inline scripts, so it isn't a one-line addition. |
 
 ---
@@ -1629,7 +1640,7 @@ Before relying on the auth upgrade, the fields better-auth 1.7 requires (`getAut
 
 ### 23.1 What's actually tested
 
-Three suites, 39 tests, all **pure functions**: `tests/validate.test.ts` (`requiredString`, `optionalString`, `clampInt`, `assertVisibility`), `tests/authz.test.ts` (`canViewVideo`, `hasLiveShareLink` — the access predicates from [§22.1](#221-the-layered-authorization-model)), and `tests/utils.test.ts` (`formatDuration`, `generatePagination`, `parseTranscript`, `updateURLParams`, `daysAgo`, `parseTimeToSeconds`). These are deliberately chosen because they're **deterministic and side-effect-free** — given the same input, they always produce the same output, with no database, network, or browser API involved, making them fast and trivial to assert against.
+Eight suites, 100 tests, all **pure functions**. The five editor suites (`edl`, `silence`, `align`, `sanitize`, `editing`; 61 tests) cover the cut-list math, undo/redo, pause detection on deterministic synthetic signals, Whisper word alignment against **real model output**, and edit-payload sanitization (see [§28](#28-the-one-take-editor)). The original three: `tests/validate.test.ts` (`requiredString`, `optionalString`, `clampInt`, `assertVisibility`), `tests/authz.test.ts` (`canViewVideo`, `hasLiveShareLink` — the access predicates from [§22.1](#221-the-layered-authorization-model)), and `tests/utils.test.ts` (`formatDuration`, `generatePagination`, `parseTranscript`, `updateURLParams`, `daysAgo`, `parseTimeToSeconds`). These are deliberately chosen because they're **deterministic and side-effect-free** — given the same input, they always produce the same output, with no database, network, or browser API involved, making them fast and trivial to assert against.
 
 A representative test, showing the *kind* of edge case these guard against:
 ```ts
@@ -1725,6 +1736,8 @@ Covered in [§21.9](#219-githubworkflowsciyml). The ordering — typecheck, then
 **Simple explanation:** JavaScript in a browser tab normally runs on one single "thread" — if something takes a long time, everything else (including the page's own responsiveness) waits for it. A Web Worker is a separate, independent thread the main page can hand small jobs off to, so long-running work doesn't freeze the tab, and — critically here — that separate thread keeps running even if the tab itself is in the background.
 
 **Technical explanation, and where this app uses it:** covered fully in [§6.3](#63-a-real-bug-this-app-hit-and-how-it-was-fixed) — the canvas-compositing draw loop is driven by a `setInterval` running *inside* a Worker (not the main thread), specifically because browsers throttle/suspend main-thread timers and `requestAnimationFrame` for hidden tabs, but do not apply that same throttling to a Worker's independent execution context.
+
+The editor ([§28](#28-the-one-take-editor)) uses two more Workers, for a different reason: CPU-heavy work. Whisper inference and WebCodecs export would each freeze the page for seconds on the main thread. Both are module workers created with `new Worker(new URL("./x.worker.ts", import.meta.url), { type: "module" })`, which Next bundles into separate chunks, so the editor page itself stays ~12 kB.
 
 ### 24.11 Database Normalization vs. Denormalization
 
@@ -1968,3 +1981,133 @@ This final section narrates, start to finish, everything that happens to one spe
 8. **Later, from the dashboard.** A week later, Udit visits his own profile page. Because he's the owner, a `ChannelAnalyticsPanel` renders — a Server Component that queries, in one aggregate SQL statement, how many unique viewers watched across every video he owns, his average completion rate, and his top five most-viewed videos, rendered as simple hand-built bar charts. He notices this particular video has a high completion rate, adds it to a new "Onboarding" collection alongside three others, and moves on.
 
 Every step above is real, traceable code in this repository — not a hypothetical. If any single step in this walkthrough is unclear, its corresponding numbered section above has the exact file, the exact function, and the reasoning behind it.
+
+---
+
+## 28. The One-Take Editor
+
+### 28.1 Why this feature, and who it's for
+
+The recorder in [§6](#6-the-recording-engine) captures a take; it can't fix one. For the people who record the most short technical videos (engineers walking through a PR, devrel recording a feature demo, a founder recording a bug repro), the real cost isn't recording. It's **re-recording**: one flubbed sentence or a 5-second "where was that tab" pause sends them back to the start. Full video editors are far too heavy for a throwaway 3-minute demo.
+
+The editor's promise is *record messy, ship clean*. Record once. Tighten every pause with one click. Delete a flubbed sentence by deleting its words from the transcript. Share the edit immediately, or export a real MP4.
+
+This feature was chosen over alternatives (AI auto-clipping into short-form clips, server-side compression or chunking, semantic search) because it addresses the most frequent pain for the target user, and because it can be built **entirely free to operate**. Every expensive step runs on the user's device.
+
+### 28.2 Architecture at a glance
+
+```
+/video/[id]/edit  (Server Component: getEditorData, owner-only, else notFound())
+   └── <Editor>                                    components/editor/Editor.tsx
+         ├── useAudioAnalysis(videoUrl)            lib/media/useAudioAnalysis.ts
+         │     fetch <cloudinary>.mp3 → OfflineAudioContext(16 kHz mono) → detectSilences
+         ├── useTranscriber()  ── Web Worker ──    lib/media/transcribe.worker.ts
+         │     Whisper tiny.en (transformers.js, WASM) on pause-aligned windows
+         │     → refineWords(words, silences) → saveWordTranscript (server)
+         ├── historyReducer (undo/redo)            lib/media/history.ts
+         │     cuts: Cut[] in SOURCE time  → mergeRanges / keptSegments / summarizeEdit
+         ├── <Timeline> canvas waveform + cut overlays
+         ├── <TranscriptPane> memoized sentence rows, pause chips
+         ├── autosave (debounced) → saveEdit (server) → videos.edl
+         └── <ExportDialog> → useExporter() ── Web Worker ── lib/media/export.worker.ts
+               mediabunny + WebCodecs: demux → decode → keep → re-time → encode → MP4
+
+/video/[id] and /share/[token]
+   └── <VideoPlayer cuts={video.edl.cuts}>  skips cuts live; controls use the edited timeline
+```
+
+The pure logic in `lib/media/` (`edl.ts`, `silence.ts`, `align.ts`, `pauses.ts`, `history.ts`, `sanitize.ts`) has no browser or React dependencies, and is what the 61 editor unit tests exercise.
+
+### 28.3 The edit model: a non-destructive cut list
+
+An edit is an **Edit Decision List**: `{ version: 1, cuts: [{ start, end, reason }], pauseLevel }`, stored in `videos.edl` (`jsonb`). Three decisions shape it:
+
+- **Cuts are in source time.** Comments, notes, chapters and `?t=` deep links all point at moments in the *original* recording. Storing cuts against the same clock means nothing needs re-anchoring when an edit changes, and every cut can be restored.
+- **Cuts are stored unmerged, with a reason** (`"silence"` from pause tightening or `"manual"` from the user). Merging happens on read (`mergeRanges`). Keeping reasons lets "switch pause level" replace only the automatic cuts while keeping manual ones. The current level is *derived* from the cuts (`levelOf` in `Editor.tsx`), not stored separately, so undo/redo can never leave the level control out of sync.
+- **The source file is never modified.** Viewers get the edit by *skipping* cut ranges during playback. Nothing is re-encoded unless the owner explicitly exports.
+
+`edl.ts` provides the timeline math: `keptSegments`, `editedDuration`, `sourceToEdited` / `editedToSource` (to map the player's clock and seek bar), `nextPlayableTime` (where playback should jump when it enters a cut), and `subtractRange` (restore: removes a range from every cut, splitting partial overlaps).
+
+### 28.4 Getting audio without downloading the video
+
+Cloudinary serves an **audio-only rendition** of any video when the URL's extension is swapped to `.mp3` (`audioRenditionUrl` in `lib/media/audio.ts`). Measured at ~100 kbps (~0.75 MB per minute), it's a fraction of the video's size. It's decoded with an `OfflineAudioContext` created at 16 kHz mono, which resamples during decode, so there's no resampling code at all. 16 kHz mono is exactly what Whisper needs, and plenty for loudness analysis.
+
+If decoding fails, which is most often a recording made without a microphone, the editor says the video has no audio track, rather than showing a raw decoder error.
+
+### 28.5 Pause detection (`lib/media/silence.ts`)
+
+1. **Loudness envelope:** RMS level in dBFS over 20 ms frames.
+2. **Adaptive threshold:** the 10th percentile of frame loudness estimates the noise floor and the 90th estimates speech level. The threshold sits 30% of the way from floor to speech, so a laptop mic in a café and a studio mic both work without a fixed −40 dB guess.
+3. **Refusal when unsure:** with less than 10 dB between speech and noise, it returns no pauses rather than cutting into speech.
+4. **Blip absorption:** quiet runs separated by sub-80 ms clicks or breaths count as one pause.
+
+Detection runs once at the most sensitive setting (`MIN_DETECTED_PAUSE = 0.4 s`). The three levels in `pauses.ts` (Gentle ≥ 1.2 s with 0.3 s padding, Balanced ≥ 0.7 s / 0.2 s, Tight ≥ 0.45 s / 0.12 s) only *filter* that list, so switching levels is instant. The buttons display the seconds each level would remove from this recording, computed against the real edit.
+
+**Measured against ffmpeg** (`silencedetect` at −40 dB) on a recording with 8 known pauses: all 8 were found and every edge was within ~60 ms. The differences fall on the safe side: detected pauses start slightly later and end slightly earlier, so speech edges aren't clipped.
+
+### 28.6 Transcription in the browser (`transcribe.worker.ts`)
+
+Whisper `tiny.en` (quantized to 8-bit, 41 MB, downloaded once from the Hugging Face Hub and cached by the browser) runs through transformers.js on the WASM backend, inside a Web Worker so the editor stays responsive. Word-level timestamps come from Whisper's cross-attention alignment. That's why the model is `Xenova/whisper-tiny.en`: the `onnx-community` export was tested and fails with "Model outputs must contain cross attentions".
+
+Whisper processes 30-second windows. Rather than chopping blindly, `planTranscriptionWindows` splits long audio into windows of ≤ 28 s **at the midpoints of detected pauses**, so no word straddles a boundary. Progress is real: model bytes during download, then windows completed with words streaming into the transcript as they arrive.
+
+Saving the transcript (`saveWordTranscript`) also rewrites the sentence-level `transcript` / `transcriptSegments` the rest of the app reads. Search, the transcript tab and AI chapters therefore improve too, including for **uploaded** videos, which had no transcript before. `processingStatus` is reset so the next view regenerates the AI summary from the better text.
+
+### 28.7 Correcting Whisper's word times (`refineWords` in `align.ts`)
+
+Whisper's word timestamps are approximate, and on test recordings they were wrong in two consistent ways:
+
+| Error | Measured example | Consequence if uncorrected |
+|---|---|---|
+| The word before a pause absorbs the pause | "flow." reported 3.16–5.96 s; audio silent from 3.01 s | A kept word renders as cut once the pause is tightened; cutting that word removes 2.8 s instead of 0.3 s |
+| Times run late by 0.2–0.5 s | "Wait," reported at 23.78 s; speech resumed at 23.38 s | Cutting a sentence leaves its first syllable audible |
+
+The waveform is measured directly, so silence detection wins any disagreement:
+
+1. A word that **starts in speech** is clipped at the first pause it runs into (the smear is always at the end).
+2. A word that **starts inside a pause** belongs *before* it, unless it starts in the pause's last 0.2 s, in which case it's an early start of the next phrase. Given the late bias, "before" is the safe default.
+3. Words are kept ordered and non-overlapping.
+4. **Edges snap to pauses:** the first word after a pause starts exactly where speech resumes, and the last word before it ends where speech stopped.
+
+The regression test in `tests/align.test.ts` uses **real Whisper output** from a test recording and asserts that no word overlaps a pause, that phrases start at measured onsets, and that pause cuts never strike through a kept word.
+
+### 28.8 Cutting by text
+
+Selecting words (click, shift-click or drag) and pressing ⌫ calls `cutForWords`. The cut runs from the first selected word's start to the **next kept word's start**, so the pause after the deleted words goes with them. Otherwise deleting a sentence would leave a doubled silence. Pressing ⌫ on an already-cut selection restores it. Each pause appears in the transcript as a chip (e.g. `2.0s`) that toggles just that pause. The timeline supports the same cut and restore actions on a dragged time range, which is how material with no words (a silent screen fumble) is removed.
+
+### 28.9 Live preview and viewer playback
+
+Both the editor preview and `VideoPlayer` skip cuts on `requestAnimationFrame`. `timeupdate` fires only ~4 times a second, which would let up to a quarter second of removed audio leak through. rAF stops completely in a background tab while audio keeps playing, though (this was observed in testing), so `timeupdate` remains as a fallback. A backgrounded viewer hears at most ~0.25 s of a cut edge, not the whole cut.
+
+`VideoPlayer` shows the **edited** timeline everywhere: the clock, the seek bar (seeks map through `editedToSource`), ±5 s and digit-key jumps, and chapter ticks. Deep links and comment timestamps stay in source time, so they remain valid across re-edits. Two existing player bugs surfaced and were fixed along the way. On a server-rendered page, the browser could load metadata before hydration, so `onLoadedMetadata` was missed and the duration showed `0:00`. MediaRecorder WebM files report an `Infinity` duration until scanned, which is now handled via `durationchange`.
+
+### 28.10 Export: a real MP4, rendered on the device (`export.worker.ts`)
+
+**What was tried first:** rendering on Cloudinary with its splice transformation. Measured result: a single splice is accurate (10.045 s for a 10 s target), but chained splices of the same asset ignore every layer's end offset after the first. Three segments rendered as **26.4 s instead of 15 s**, and four as 32.8 s instead of 18 s. Splicing distinct derived assets returned HTTP 400. That made server-side rendering on the free stack a dead end.
+
+**What runs instead:** WebCodecs with [mediabunny](https://mediabunny.dev) in a Web Worker:
+
+1. Demux the source over HTTP range requests (`UrlSource`, with bounded retries: its default retries forever, which would hang the dialog when offline).
+2. Negotiate codecs the device can encode: H.264 → VP9 → AV1 for video and AAC → Opus for audio, scaled down to the chosen preset (Original / 1080p / 720p / Compact), never up.
+3. For each kept segment, iterate decoded frames and audio from 0.25 s before it (pre-roll, so a frame that starts before the cut is still found), keep what falls inside the segment, and **re-time** it onto the edited timeline. Video and audio use the same segment offsets, which is what keeps them in sync across every cut. Audio is trimmed sample-accurately at each boundary (`AudioSample.trim`). A video frame less than half inside a segment is dropped (measured slivers were 13 ms), letting its neighbour hold. This avoids near-duplicate timestamps that strict players reject.
+4. Encode with the hardware encoder and mux to MP4 with the index at the front (`fastStart: "in-memory"`), so it streams.
+
+**Measured:** a 33 s recording edited to 19.325 s exported as 19.313 s video and 19.320 s audio, and ffmpeg decoded it cleanly. Every tightened pause measured ~0.3 s, matching the configured padding. Rendering ~19 s of 720p took 3.0–3.4 s (5–6× real time) in Chromium. The dialog reports real progress, the negotiated codecs, the render speed, and the **actual** output size against the original's `Content-Length`, including when the output is larger (for example, on very compressible synthetic test video).
+
+### 28.11 Security and validation
+
+- `getEditorData` returns `null`, and the page `notFound()`s, unless the caller owns the video. `saveEdit` and `saveWordTranscript` go through `requireOwnedVideo`, which reports "Video not found" for both missing and not-yours, so ids can't be probed.
+- All client input is untrusted. `sanitize.ts` rejects non-arrays and oversized payloads (≤ 40,000 words, ≤ 5,000 cuts, words ≤ 48 characters), drops malformed items, clamps times to the stored duration plus 2 s of slack, rounds to milliseconds and sorts.
+- `words` is excluded from every viewer payload (`buildVideoWithUserQuery` destructures it out), because viewers only need the cut list.
+- **Known limitation:** edits change what SnapCast *plays*, not the stored asset, so the original remains reachable at its Cloudinary URL. When removed material must not exist, export and re-upload the MP4.
+
+### 28.12 Limitations, stated plainly
+
+| Limitation | Why | Mitigation |
+|---|---|---|
+| Filler words ("um", "uh") rarely appear in the transcript | Whisper is trained on cleaned transcripts | Pause tightening, and manual timeline cuts |
+| Memory: ~3.8 MB per minute of analysis audio; export is buffered in memory | Whole-file processing in the browser | Practical ceiling ~30–45 min recordings |
+| Preview skip precision ~16 ms visible, ~250 ms in a background tab | rAF vs `timeupdate` | Export is frame- and sample-accurate |
+| Switching pause level drops per-pause overrides | Levels regenerate automatic cuts | Manual cuts are kept; undo restores |
+| Export verified in Chromium only | Firefox/Safari WebCodecs support varies by version | The dialog surfaces "can't encode" errors |
+| No timeline zoom | Scope | Transcript selection gives word-level precision |

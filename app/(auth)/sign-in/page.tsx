@@ -22,8 +22,9 @@ const SignIn = () => {
         <div className="description">
           <section>
             <p>
-              Record your screen, add a webcam overlay, and share instantly —
-              all from your browser. No plugins, no extensions, no hassle.
+              Record a demo in one take, then fix it like a doc: delete words
+              from the transcript, tighten every pause, and share a clean cut.
+              It all runs in your browser, with nothing to install.
             </p>
           </section>
         </div>

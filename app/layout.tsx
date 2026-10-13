@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     template: "%s | SnapCast",
   },
   description:
-    "Record your screen with webcam overlay, get AI-generated summaries and chapters, and share videos with privacy controls — all from your browser.",
+    "Record a demo in one take, then edit it by editing its transcript: cut words, tighten pauses, export an MP4 and share with privacy controls, all in your browser.",
   icons: {
     icon: "/assets/icons/logo.svg",
   },
@@ -26,13 +26,13 @@ export const metadata: Metadata = {
     siteName: "SnapCast",
     title: "SnapCast — Screen Recording & Video Sharing",
     description:
-      "Browser-native screen recording with AI summaries, chapters, and privacy-controlled sharing.",
+      "Browser-native screen recording with transcript-based editing, pause removal, AI chapters and privacy-controlled sharing.",
   },
   twitter: {
     card: "summary_large_image",
     title: "SnapCast — Screen Recording & Video Sharing",
     description:
-      "Browser-native screen recording with AI summaries, chapters, and privacy-controlled sharing.",
+      "Browser-native screen recording with transcript-based editing, pause removal, AI chapters and privacy-controlled sharing.",
   },
 };
 
