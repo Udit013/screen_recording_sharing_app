@@ -98,7 +98,11 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     const videoSource = new VideoSampleSource({
       codec: videoCodec,
       bitrate: QUALITY[cfg.quality],
-      transform: scale < 1 ? { width, height } : undefined,
+      // `fit` is required at runtime whenever both dimensions are given (the
+      // type marks it optional). The size already keeps the source aspect
+      // ratio, so "fill" only absorbs sub-pixel rounding to even dimensions,
+      // where "contain" could leave a 1 px black edge.
+      transform: scale < 1 ? { width, height, fit: "fill" } : undefined,
     });
     output.addVideoTrack(videoSource);
     const audioSource = audioCodec ? new AudioSampleSource({ codec: audioCodec, bitrate: QUALITY_HIGH }) : null;
