@@ -7,8 +7,18 @@ import {
   useState,
   useCallback,
   useImperativeHandle,
+  useMemo,
   forwardRef,
 } from "react";
+import {
+  editedDuration,
+  editedToSource,
+  keptSegments,
+  mergeRanges,
+  nextPlayableTime,
+  sourceToEdited,
+  type Cut,
+} from "@/lib/media/edl";
 import { incrementVideoViews } from "@/lib/actions/video";
 import { recordWatch } from "@/lib/actions/analytics";
 import { getAnonId } from "@/lib/anon";
@@ -22,6 +32,8 @@ interface VideoPlayerProps {
   videoUrl: string;
   videoId: string;
   chapters?: Chapter[] | null;
+  /** The owner's edit (source-time cuts). Played back by skipping, live. */
+  cuts?: Cut[] | null;
   className?: string;
   onReady?: () => void;
 }
@@ -30,7 +42,7 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const CONTROLS_HIDE_MS = 2600;
 
 const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
-  ({ videoUrl, videoId, chapters, className, onReady }, ref) => {
+  ({ videoUrl, videoId, chapters, cuts, className, onReady }, ref) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -54,6 +66,31 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const [copiedTs, setCopiedTs] = useState(false);
     const [hasIncrementedView, setHasIncrementedView] = useState(false);
     const [pipSupported, setPipSupported] = useState(false);
+
+    // ── Edited timeline ───────────────────────────────────────────────────
+    // The source file is never re-encoded: cuts are skipped during playback,
+    // and every control the viewer sees works on the edited timeline. Deep
+    // links, comments and chapters stay in source time, so they survive
+    // re-edits.
+    const merged = useMemo(
+      () => (cuts?.length && duration > 0 ? mergeRanges(cuts, duration) : []),
+      [cuts, duration]
+    );
+    const kept = useMemo(() => keptSegments(merged, duration), [merged, duration]);
+    const isEdited = merged.length > 0;
+    const shownDuration = isEdited ? editedDuration(merged, duration) : duration;
+    const toShown = useCallback(
+      (t: number) => (isEdited ? sourceToEdited(t, merged) : t),
+      [isEdited, merged]
+    );
+    const toSource = useCallback(
+      (t: number) => (isEdited ? editedToSource(t, kept) : t),
+      [isEdited, kept]
+    );
+    const mergedRef = useRef(merged);
+    useEffect(() => {
+      mergedRef.current = merged;
+    }, [merged]);
 
     useImperativeHandle(ref, () => ({
       seekTo(seconds: number) {
@@ -94,13 +131,26 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const handleLoadedMetadata = useCallback(() => {
       const v = videoRef.current;
       if (!v) return;
-      setDuration(v.duration);
+      if (Number.isFinite(v.duration)) setDuration(v.duration);
       const t = Number(
         new URLSearchParams(window.location.search).get("t") ?? NaN
       );
       if (Number.isFinite(t) && t > 0 && t < v.duration) {
         v.currentTime = t;
       }
+    }, []);
+
+    // On a server-rendered page the browser can load metadata before React
+    // hydrates and attaches onLoadedMetadata, leaving the duration at 0.
+    useEffect(() => {
+      const v = videoRef.current;
+      if (v && v.readyState >= 1) handleLoadedMetadata();
+    }, [handleLoadedMetadata]);
+
+    // MediaRecorder WebM reports Infinity until the browser has scanned it.
+    const handleDurationChange = useCallback(() => {
+      const v = videoRef.current;
+      if (v && Number.isFinite(v.duration)) setDuration(v.duration);
     }, []);
 
     // ── Playback plumbing ─────────────────────────────────────────────────
@@ -125,8 +175,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const seekBy = useCallback((delta: number) => {
       const v = videoRef.current;
       if (!v) return;
-      v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + delta));
-    }, []);
+      const shown = Math.max(0, Math.min(shownDuration, toShown(v.currentTime) + delta));
+      v.currentTime = toSource(shown);
+    }, [shownDuration, toShown, toSource]);
 
     const setVolumeClamped = useCallback((value: number) => {
       const v = videoRef.current;
@@ -193,18 +244,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     }, []);
 
     // ── Watch analytics (view count + watch event) ────────────────────────
-    const handleTimeUpdate = useCallback(() => {
-      const v = videoRef.current;
-      if (!v) return;
-      setCurrentTime(v.currentTime);
-      if (v.currentTime > maxWatchedRef.current) {
-        maxWatchedRef.current = v.currentTime;
-      }
-      if (!hasIncrementedView && v.currentTime > 3) {
-        setHasIncrementedView(true);
-        incrementVideoViews(videoId).catch(console.error);
-      }
-    }, [hasIncrementedView, videoId]);
 
     const handleProgress = useCallback(() => {
       const v = videoRef.current;
@@ -232,6 +271,49 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       };
     }, [flushWatch]);
 
+    // Skip removed material. rAF drives it in a visible tab (timeupdate is
+    // only ~4 Hz, which would let up to a quarter second of a cut leak
+    // through); timeupdate is the fallback because rAF stops entirely in a
+    // background tab while the audio keeps playing.
+    const skipCuts = useCallback(() => {
+      const v = videoRef.current;
+      if (!v || v.paused || mergedRef.current.length === 0) return;
+      const t = v.currentTime;
+      const next = nextPlayableTime(t, mergedRef.current);
+      if (next === t) return;
+      if (next >= v.duration - 0.05) {
+        v.pause();
+        flushWatch();
+      } else {
+        v.currentTime = next;
+      }
+    }, [flushWatch]);
+
+    useEffect(() => {
+      if (!playing || !isEdited) return;
+      let raf = 0;
+      const tick = () => {
+        skipCuts();
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }, [playing, isEdited, skipCuts]);
+
+    const handleTimeUpdate = useCallback(() => {
+      const v = videoRef.current;
+      if (!v) return;
+      skipCuts();
+      setCurrentTime(v.currentTime);
+      if (v.currentTime > maxWatchedRef.current) {
+        maxWatchedRef.current = v.currentTime;
+      }
+      if (!hasIncrementedView && v.currentTime > 3) {
+        setHasIncrementedView(true);
+        incrementVideoViews(videoId).catch(console.error);
+      }
+    }, [hasIncrementedView, videoId, skipCuts]);
+
     // ── Seek track interactions ───────────────────────────────────────────
     const timeFromPointer = useCallback(
       (clientX: number): number => {
@@ -239,9 +321,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         if (!track || !duration) return 0;
         const rect = track.getBoundingClientRect();
         const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-        return ratio * duration;
+        return ratio * shownDuration;
       },
-      [duration]
+      [duration, shownDuration]
     );
 
     const handleTrackPointerDown = useCallback(
@@ -250,10 +332,10 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         if (!v) return;
         draggingRef.current = true;
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        v.currentTime = timeFromPointer(e.clientX);
+        v.currentTime = toSource(timeFromPointer(e.clientX));
 
         const onMove = (ev: PointerEvent) => {
-          v.currentTime = timeFromPointer(ev.clientX);
+          v.currentTime = toSource(timeFromPointer(ev.clientX));
         };
         const onUp = () => {
           draggingRef.current = false;
@@ -263,7 +345,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         window.addEventListener("pointermove", onMove);
         window.addEventListener("pointerup", onUp);
       },
-      [timeFromPointer]
+      [timeFromPointer, toSource]
     );
 
     const handleTrackHover = useCallback(
@@ -329,7 +411,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           default:
             if (/^[0-9]$/.test(e.key) && duration > 0) {
               const v = videoRef.current;
-              if (v) v.currentTime = (Number(e.key) / 10) * duration;
+              if (v) v.currentTime = toSource((Number(e.key) / 10) * shownDuration);
             }
         }
         pokeControls();
@@ -344,12 +426,14 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         volume,
         speed,
         duration,
+        shownDuration,
+        toSource,
         pokeControls,
       ]
     );
 
-    const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
-    const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
+    const progressPct = shownDuration > 0 ? (toShown(currentTime) / shownDuration) * 100 : 0;
+    const bufferedPct = shownDuration > 0 ? (toShown(buffered) / shownDuration) * 100 : 0;
     const validChapters = (chapters ?? []).filter(
       (c) => duration > 0 && c.timestamp >= 0 && c.timestamp < duration
     );
@@ -380,6 +464,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           onClick={handleVideoClick}
           onDoubleClick={toggleFullscreen}
           onLoadedMetadata={handleLoadedMetadata}
+          onDurationChange={handleDurationChange}
           onCanPlay={() => onReady?.()}
           onTimeUpdate={handleTimeUpdate}
           onProgress={handleProgress}
@@ -421,9 +506,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             role="slider"
             aria-label="Seek"
             aria-valuemin={0}
-            aria-valuemax={Math.floor(duration)}
-            aria-valuenow={Math.floor(currentTime)}
-            aria-valuetext={formatDuration(Math.floor(currentTime)) || "0:00"}
+            aria-valuemax={Math.floor(shownDuration)}
+            aria-valuenow={Math.floor(toShown(currentTime))}
+            aria-valuetext={formatDuration(Math.floor(toShown(currentTime))) || "0:00"}
           >
             <div className="player-track-buffered" style={{ width: `${bufferedPct}%` }} />
             <div className="player-track-progress" style={{ width: `${progressPct}%` }} />
@@ -431,7 +516,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               <div
                 key={i}
                 className="player-chapter-tick"
-                style={{ left: `${(c.timestamp / duration) * 100}%` }}
+                style={{ left: `${(toShown(c.timestamp) / shownDuration) * 100}%` }}
                 title={c.title}
               />
             ))}
@@ -481,9 +566,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               />
 
               <span className="player-time">
-                {formatDuration(Math.floor(currentTime)) || "0:00"}
+                {formatDuration(Math.floor(toShown(currentTime))) || "0:00"}
                 <span className="player-time-sep"> / </span>
-                {formatDuration(Math.floor(duration)) || "0:00"}
+                {formatDuration(Math.floor(shownDuration)) || "0:00"}
               </span>
             </div>
 

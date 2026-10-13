@@ -112,6 +112,7 @@ const SharePage = async ({ params }: SharePageProps) => {
           videoUrl={video.videoUrl}
           videoId={video.videoId}
           chapters={video.chapters}
+          cuts={video.edl?.cuts}
         />
 
         {video.description && (

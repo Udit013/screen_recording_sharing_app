@@ -90,6 +90,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
             videoUrl={video.videoUrl}
             videoId={video.videoId}
             chapters={video.chapters}
+            cuts={video.edl?.cuts}
             onReady={handleVideoReady}
           />
 
