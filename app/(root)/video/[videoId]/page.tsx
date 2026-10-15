@@ -10,6 +10,8 @@ import {
 import { getVideoById, processVideoAI } from "@/lib/actions/video";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VideoPlayerHandle } from "@/components/VideoPlayer";
+import BackLink from "@/components/BackLink";
+import EditNudge from "@/components/EditNudge";
 
 type PageProps = {
   params: Promise<{ videoId: string }>;
@@ -65,6 +67,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
 
   return (
     <main className="wrapper page">
+      <BackLink fallbackHref="/" fallbackLabel="Library" />
       <VideoDetailHeader
         title={video.title}
         createdAt={video.createdAt}
@@ -82,6 +85,13 @@ const VideoDetailPage = ({ params }: PageProps) => {
           Generating AI summary & chapters…
         </div>
       )}
+
+      <EditNudge
+        videoId={video.videoId}
+        ownerId={video.userId}
+        edl={video.edl}
+        duration={video.duration}
+      />
 
       <section className="video-details">
         <div className="content">

@@ -1,5 +1,6 @@
 "use client";
 
+import BackLink from "@/components/BackLink";
 import { useState, FormEvent, ChangeEvent, useEffect, useRef } from "react";
 import {
   getVideoUploadUrl,
@@ -211,6 +212,7 @@ const UploadPage = () => {
 
   return (
     <main className="wrapper-md upload-page">
+      <BackLink fallbackHref="/" fallbackLabel="Library" />
       <h1>Upload a video</h1>
 
       {error && <div className="error-field">{error}</div>}

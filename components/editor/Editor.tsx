@@ -7,7 +7,7 @@ import { useAudioAnalysis, type AnalysisState } from "@/lib/media/useAudioAnalys
 import { useTranscriber } from "@/lib/media/useTranscriber";
 import { historyReducer } from "@/lib/media/history";
 import {
-  keptSegments, mergeRanges, nextPlayableTime, isInsideCut, roundMs, sourceToEdited, subtractRange, summarizeEdit,
+  clipSegments, keptSegments, mergeRanges, nextPlayableTime, isInsideCut, roundMs, sourceToEdited, subtractRange, summarizeEdit,
   type Cut, type Range,
 } from "@/lib/media/edl";
 import { PAUSE_LEVELS, pauseCuts, type PauseLevel } from "@/lib/media/pauses";
@@ -308,29 +308,43 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const seqRef = useRef(0);
   const inFlightRef = useRef(0);
 
+  // The edit waiting for the debounce. Kept in a ref so leaving the editor
+  // through an in-app link (which beforeunload never sees) can still send it.
+  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null } | null>(null);
+
+  const sendPending = useCallback(() => {
+    const p = pendingRef.current;
+    if (!p) return;
+    pendingRef.current = null;
+    sentKeyRef.current = p.key;
+    const seq = ++seqRef.current;
+    inFlightRef.current++;
+    saveEdit(data.videoId, p.cuts, p.level)
+      .then(() => { if (seq === seqRef.current) setSave({ status: "saved" }); })
+      .catch((err) => {
+        if (seq !== seqRef.current) return;
+        sentKeyRef.current = null;
+        setSave({ status: "error", message: err instanceof Error ? err.message : "Save failed" });
+      })
+      .finally(() => { inFlightRef.current--; });
+  }, [data.videoId]);
+
   useEffect(() => {
     const key = JSON.stringify([cuts, saveLevel]);
     if (key === sentKeyRef.current) {
       // e.g. an edit undone before it was sent: nothing new to store.
+      pendingRef.current = null;
       if (inFlightRef.current === 0) setSave({ status: "saved" });
       return;
     }
     setSave({ status: "saving" });
-    const timer = setTimeout(() => {
-      sentKeyRef.current = key;
-      const seq = ++seqRef.current;
-      inFlightRef.current++;
-      saveEdit(data.videoId, cuts, saveLevel)
-        .then(() => { if (seq === seqRef.current) setSave({ status: "saved" }); })
-        .catch((err) => {
-          if (seq !== seqRef.current) return;
-          sentKeyRef.current = null;
-          setSave({ status: "error", message: err instanceof Error ? err.message : "Save failed" });
-        })
-        .finally(() => { inFlightRef.current--; });
-    }, 700);
+    pendingRef.current = { key, cuts, level: saveLevel };
+    const timer = setTimeout(sendPending, 700);
     return () => clearTimeout(timer);
-  }, [cuts, saveLevel, data.videoId, retryTick]);
+  }, [cuts, saveLevel, retryTick, sendPending]);
+
+  // Unmount (navigating away inside the app): send what the debounce held.
+  useEffect(() => () => sendPending(), [sendPending]);
 
   useEffect(() => {
     if (save.status === "saved") return;
@@ -340,16 +354,36 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   }, [save.status]);
 
   // ── Export ──────────────────────────────────────────────────────────────
-  const [exportOpen, setExportOpen] = useState(false);
-  const openExport = useCallback(() => {
+  // null = closed; otherwise the segments to render and what they are.
+  const [exportJob, setExportJob] = useState<{ segments: Range[]; selection: boolean } | null>(null);
+  const exportOpen = exportJob !== null;
+  const openExport = useCallback((segments: Range[], selection: boolean) => {
     videoRef.current?.pause();
-    setExportOpen(true);
+    setExportJob({ segments, selection });
   }, []);
 
+  // ── Clips ───────────────────────────────────────────────────────────────
+  const selectionKept = useMemo(() => (selRange ? clipSegments(kept, selRange) : []), [kept, selRange]);
+  // copied: false means the clipboard was unavailable, so the link is shown
+  // in a field to copy by hand rather than failing silently.
+  const [clipLink, setClipLink] = useState<{ url: string; copied: boolean } | null>(null);
+  useEffect(() => setClipLink(null), [selRange]);
+  const copyClipLink = useCallback(() => {
+    if (!selRange) return;
+    // Source time, like ?t= links, so the link survives later re-edits.
+    const r1 = (t: number) => Math.round(t * 10) / 10;
+    const url = `${window.location.origin}/video/${data.videoId}?t=${r1(selRange.start)}&end=${r1(selRange.end)}`;
+    const copy = navigator.clipboard?.writeText(url) ?? Promise.reject(new Error("no clipboard"));
+    copy.then(() => setClipLink({ url, copied: true })).catch(() => setClipLink({ url, copied: false }));
+  }, [selRange, data.videoId]);
+
+  // ── Shortcut sheet ──────────────────────────────────────────────────────
+  const [helpOpen, setHelpOpen] = useState(false);
+
   // ── Keyboard ────────────────────────────────────────────────────────────
-  const keys = useRef({ togglePlay, cutSelection, restoreSelection, clearSelection, selFullyCut, exportOpen });
+  const keys = useRef({ togglePlay, cutSelection, restoreSelection, clearSelection, selFullyCut, exportOpen, helpOpen });
   useEffect(() => {
-    keys.current = { togglePlay, cutSelection, restoreSelection, clearSelection, selFullyCut, exportOpen };
+    keys.current = { togglePlay, cutSelection, restoreSelection, clearSelection, selFullyCut, exportOpen, helpOpen };
   });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -371,8 +405,12 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
         e.preventDefault();
         if (k.selFullyCut) k.restoreSelection();
         else k.cutSelection();
+      } else if (e.key === "?") {
+        e.preventDefault();
+        setHelpOpen((o) => !o);
       } else if (e.key === "Escape") {
-        k.clearSelection();
+        if (k.helpOpen) setHelpOpen(false);
+        else k.clearSelection();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -413,7 +451,11 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
             aria-label="Redo" title="Redo (⇧⌘Z)">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 14 5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></svg>
           </button>
-          <button className="ed-btn is-primary" onClick={openExport} disabled={kept.length === 0}>Export MP4</button>
+          <button className="ed-icon" onClick={() => setHelpOpen((o) => !o)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"
+            aria-expanded={helpOpen}>
+            <span aria-hidden className="ed-icon-text">?</span>
+          </button>
+          <button className="ed-btn is-primary" onClick={() => openExport(kept, false)} disabled={kept.length === 0}>Export MP4</button>
         </div>
       </header>
 
@@ -513,7 +555,26 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
                     <button className="ed-btn is-small" onClick={restoreSelection}>Restore</button>
                   </>
                 )}
+                {selectionKept.length > 0 && (
+                  <>
+                    <span className="ed-selbar-sep" aria-hidden />
+                    <button className="ed-btn is-small" onClick={copyClipLink} title="Link that plays just this part">
+                      {clipLink?.copied ? "Link copied" : "Copy clip link"}
+                    </button>
+                    <button className="ed-btn is-small" onClick={() => openExport(selectionKept, true)}>Export clip</button>
+                  </>
+                )}
                 <button className="ed-link" onClick={clearSelection}>Clear</button>
+                {clipLink && !clipLink.copied && (
+                  <input
+                    className="ed-clip-url"
+                    readOnly
+                    value={clipLink.url}
+                    aria-label="Clip link (copy it manually)"
+                    autoFocus
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                )}
               </div>
             ) : (
               <p className="ed-hint">
@@ -600,14 +661,38 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
         </div>
       </div>
 
-      {exportOpen && (
+      {exportJob && (
         <ExportDialog
           videoUrl={data.videoUrl}
           title={data.title}
-          segments={kept}
-          editedSeconds={summary.editedDuration}
-          onClose={() => setExportOpen(false)}
+          segments={exportJob.segments}
+          selection={exportJob.selection}
+          editedSeconds={exportJob.segments.reduce((s, r) => s + (r.end - r.start), 0)}
+          onClose={() => setExportJob(null)}
         />
+      )}
+
+      {helpOpen && (
+        <div className="ed-help" role="dialog" aria-label="Keyboard shortcuts">
+          <div className="ed-help-head">
+            <h2>Keyboard shortcuts</h2>
+            <button className="ed-link" onClick={() => setHelpOpen(false)}>Close</button>
+          </div>
+          <dl>
+            {[
+              ["Space", "Play / pause"],
+              ["⌫  Delete", "Cut the selection, or restore it if it's already cut"],
+              ["Shift-click", "Extend a word selection"],
+              ["Drag", "Select words, or a range on the timeline"],
+              ["← →", "Step 1 s (timeline focused)"],
+              ["⌘Z  ⇧⌘Z", "Undo / redo"],
+              ["Esc", "Clear the selection"],
+              ["?", "Show or hide this list"],
+            ].map(([k, v]) => (
+              <div key={k}><dt><kbd>{k}</kbd></dt><dd>{v}</dd></div>
+            ))}
+          </dl>
+        </div>
       )}
     </div>
   );

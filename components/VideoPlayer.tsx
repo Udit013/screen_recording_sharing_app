@@ -66,6 +66,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const [copiedTs, setCopiedTs] = useState(false);
     const [hasIncrementedView, setHasIncrementedView] = useState(false);
     const [pipSupported, setPipSupported] = useState(false);
+    // A shared clip (?t=12&end=40): play just that range, in source time.
+    const [clip, setClip] = useState<{ start: number; end: number } | null>(null);
+    const clipRef = useRef<{ start: number; end: number } | null>(null);
+    useEffect(() => {
+      clipRef.current = clip;
+    }, [clip]);
 
     // ── Edited timeline ───────────────────────────────────────────────────
     // The source file is never re-encoded: cuts are skipped during playback,
@@ -132,12 +138,26 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       const v = videoRef.current;
       if (!v) return;
       if (Number.isFinite(v.duration)) setDuration(v.duration);
-      const t = Number(
-        new URLSearchParams(window.location.search).get("t") ?? NaN
-      );
-      if (Number.isFinite(t) && t > 0 && t < v.duration) {
+      const params = new URLSearchParams(window.location.search);
+      const t = Number(params.get("t") ?? NaN);
+      const end = Number(params.get("end") ?? NaN);
+      const total = Number.isFinite(v.duration) ? v.duration : Infinity;
+      if (Number.isFinite(end) && end > (Number.isFinite(t) ? t : 0) + 0.5) {
+        const start = Number.isFinite(t) ? Math.max(0, t) : 0;
+        if (start < total) {
+          setClip({ start, end: Math.min(end, total) });
+          v.currentTime = start;
+        }
+      } else if (Number.isFinite(t) && t > 0 && t < total) {
         v.currentTime = t;
       }
+    }, []);
+
+    const exitClip = useCallback(() => {
+      setClip(null);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("end");
+      window.history.replaceState(null, "", url);
     }, []);
 
     // On a server-rendered page the browser can load metadata before React
@@ -157,8 +177,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const togglePlay = useCallback(() => {
       const v = videoRef.current;
       if (!v) return;
-      if (v.paused) v.play().catch(() => {});
-      else v.pause();
+      if (v.paused) {
+        // Replaying a finished clip starts it again rather than doing nothing.
+        const c = clipRef.current;
+        if (c && v.currentTime >= c.end - 0.1) v.currentTime = c.start;
+        v.play().catch(() => {});
+      } else v.pause();
     }, []);
 
     // On touch devices the first tap while controls are hidden should reveal
@@ -277,7 +301,13 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     // background tab while the audio keeps playing.
     const skipCuts = useCallback(() => {
       const v = videoRef.current;
-      if (!v || v.paused || mergedRef.current.length === 0) return;
+      if (!v || v.paused) return;
+      const c = clipRef.current;
+      if (c && v.currentTime >= c.end - 0.02) {
+        v.pause();
+        return;
+      }
+      if (mergedRef.current.length === 0) return;
       const t = v.currentTime;
       const next = nextPlayableTime(t, mergedRef.current);
       if (next === t) return;
@@ -290,7 +320,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     }, [flushWatch]);
 
     useEffect(() => {
-      if (!playing || !isEdited) return;
+      if (!playing || (!isEdited && !clip)) return;
       let raf = 0;
       const tick = () => {
         skipCuts();
@@ -298,7 +328,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       };
       raf = requestAnimationFrame(tick);
       return () => cancelAnimationFrame(raf);
-    }, [playing, isEdited, skipCuts]);
+    }, [playing, isEdited, clip, skipCuts]);
 
     const handleTimeUpdate = useCallback(() => {
       const v = videoRef.current;
@@ -483,6 +513,16 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           }}
         />
 
+        {clip && (
+          <div className="player-clip" role="status">
+            <span>
+              Clip · {formatDuration(Math.floor(toShown(clip.start))) || "0:00"}–
+              {formatDuration(Math.floor(toShown(clip.end))) || "0:00"}
+            </span>
+            <button onClick={exitClip}>Watch full video</button>
+          </div>
+        )}
+
         {!playing && (
           <button
             className="player-big-play"
@@ -511,6 +551,15 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             aria-valuetext={formatDuration(Math.floor(toShown(currentTime))) || "0:00"}
           >
             <div className="player-track-buffered" style={{ width: `${bufferedPct}%` }} />
+            {clip && shownDuration > 0 && (
+              <div
+                className="player-track-clip"
+                style={{
+                  left: `${(toShown(clip.start) / shownDuration) * 100}%`,
+                  width: `${((toShown(clip.end) - toShown(clip.start)) / shownDuration) * 100}%`,
+                }}
+              />
+            )}
             <div className="player-track-progress" style={{ width: `${progressPct}%` }} />
             {validChapters.map((c, i) => (
               <div

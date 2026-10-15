@@ -10,6 +10,7 @@ import {
   cutsFromSilences,
   summarizeEdit,
   roundMs,
+  clipSegments,
 } from "@/lib/media/edl";
 
 const close = (a: number, b: number) => expect(a).toBeCloseTo(b, 6);
@@ -108,4 +109,22 @@ describe("summarizeEdit", () => {
 it("roundMs rounds to milliseconds", () => {
   expect(roundMs(1.23456)).toBe(1.235);
   expect(roundMs(0.1 + 0.2)).toBe(0.3);
+});
+
+describe("clipSegments", () => {
+  const kept = [{ start: 0, end: 2 }, { start: 4, end: 6 }, { start: 8, end: 10 }];
+
+  it("keeps only kept material inside the range", () => {
+    expect(clipSegments(kept, { start: 1, end: 9 })).toEqual([
+      { start: 1, end: 2 }, { start: 4, end: 6 }, { start: 8, end: 9 },
+    ]);
+  });
+
+  it("returns nothing when the range lies entirely in a cut", () => {
+    expect(clipSegments(kept, { start: 2.5, end: 3.5 })).toEqual([]);
+  });
+
+  it("drops slivers below the edit epsilon", () => {
+    expect(clipSegments(kept, { start: 1.999, end: 4.001 })).toEqual([]);
+  });
 });

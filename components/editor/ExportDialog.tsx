@@ -11,13 +11,15 @@ interface ExportDialogProps {
   title: string;
   segments: Range[];
   editedSeconds: number;
+  /** Rendering a selected clip rather than the whole edit. */
+  selection?: boolean;
   onClose: () => void;
 }
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 2 : 1)} MB`;
 const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV1", aac: "AAC", opus: "Opus" };
 
-export default function ExportDialog({ videoUrl, title, segments, editedSeconds, onClose }: ExportDialogProps) {
+export default function ExportDialog({ videoUrl, title, segments, editedSeconds, selection = false, onClose }: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>("720p");
   const [sourceBytes, setSourceBytes] = useState<number | null>(null);
   const { state, start, reset } = useExporter();
@@ -37,14 +39,14 @@ export default function ExportDialog({ videoUrl, title, segments, editedSeconds,
     return () => document.removeEventListener("keydown", onKey);
   }, [busy, onClose]);
 
-  const fileName = `${title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "snapcast"}-edited.mp4`;
+  const fileName = `${title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "snapcast"}-${selection ? "clip" : "edited"}.mp4`;
 
   return (
     <div className="ex-overlay" onClick={() => !busy && onClose()}>
       <div className="ex-dialog" role="dialog" aria-modal="true" aria-labelledby="ex-title" onClick={(e) => e.stopPropagation()}>
         <header className="ex-head">
           <div>
-            <h2 id="ex-title">Export edited video</h2>
+            <h2 id="ex-title">{selection ? "Export clip" : "Export edited video"}</h2>
             <p>
               {formatDuration(Math.round(editedSeconds)) || "0:00"} · {segments.length}{" "}
               {segments.length === 1 ? "segment" : "segments"} · rendered on this device

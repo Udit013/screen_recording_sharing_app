@@ -11,6 +11,7 @@ import {
   VideoCard,
   ChannelAnalyticsPanel,
 } from "@/components";
+import BackLink from "@/components/BackLink";
 
 const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
   const { id } = await params;
@@ -24,6 +25,8 @@ const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
 
   return (
     <main className="wrapper page">
+      {/* Your own profile is a primary destination in the navbar. */}
+      {!isOwner && <BackLink fallbackHref="/" fallbackLabel="Library" />}
       <SharedHeader
         subHeader={`${count} ${count === 1 ? "video" : "videos"}`}
         title={user?.name}

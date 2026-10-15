@@ -176,3 +176,18 @@ export function subtractRange(cuts: Cut[], range: Range): Cut[] {
   }
   return out;
 }
+
+/**
+ * The parts of `segments` (sorted, disjoint) that fall inside `range`. Used to
+ * export just a selection of the edit: kept material only, so a clip of an
+ * edited video is itself edited.
+ */
+export function clipSegments(segments: Range[], range: Range): Range[] {
+  const out: Range[] = [];
+  for (const s of segments) {
+    const start = Math.max(s.start, range.start);
+    const end = Math.min(s.end, range.end);
+    if (end - start > EPSILON) out.push({ start: roundMs(start), end: roundMs(end) });
+  }
+  return out;
+}
