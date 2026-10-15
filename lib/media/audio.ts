@@ -85,3 +85,23 @@ export async function loadAnalysisAudio(
   }
   return { samples, sampleRate: buffer.sampleRate, duration: buffer.duration, bytes };
 }
+
+const warmed = new Set<string>();
+
+/**
+ * Starts downloading a video's analysis audio before the editor opens, on a
+ * signal of intent (hovering or focusing an Edit link). The rendition is
+ * served with `Cache-Control: immutable, max-age=30d`, so the editor's own
+ * request is answered from the browser cache — and if this request is still
+ * in flight, the browser makes the second one wait for it rather than
+ * downloading twice. It requests exactly what the editor would a moment
+ * later, so it adds no extra Cloudinary work. Fire-and-forget; once per URL.
+ */
+export function prewarmAnalysisAudio(videoUrl: string): void {
+  const url = audioRenditionUrl(videoUrl);
+  if (warmed.has(url)) return;
+  warmed.add(url);
+  fetch(url)
+    .then((r) => r.arrayBuffer())
+    .catch(() => warmed.delete(url));
+}

@@ -78,6 +78,8 @@ declare global {
     ownerId: string;
     visibility: Visibility;
     shareToken?: string | null;
+    /** Lets the Edit button start loading the editor's audio on hover. */
+    videoUrl?: string;
   }
 
   interface VideoInfoProps {

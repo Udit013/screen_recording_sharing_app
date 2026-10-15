@@ -2032,6 +2032,12 @@ An edit is an **Edit Decision List**: `{ version: 1, cuts: [{ start, end, reason
 
 Cloudinary serves an **audio-only rendition** of any video when the URL's extension is swapped to `.mp3` (`audioRenditionUrl` in `lib/media/audio.ts`). Measured at ~100 kbps (~0.75 MB per minute), it's a fraction of the video's size. It's decoded with an `OfflineAudioContext` created at 16 kHz mono, which resamples during decode, so there's no resampling code at all. 16 kHz mono is exactly what Whisper needs, and plenty for loudness analysis.
 
+**Load time, measured on the live site** (10-minute talk): the rendition downloads in 0.58 s (8.5 MB, 169 ms to first byte, even on a CDN miss, because Cloudinary stores derived assets permanently) and decode plus analysis takes ~1.4 s. The one slow case is the very first request for a video's rendition, when Cloudinary transcodes it on demand: 15.9 s for that talk. Three things keep this quick at no cost:
+
+- **Intent prefetch.** `prewarmAnalysisAudio` (`audio.ts`) starts the download when an owner hovers or focuses an Edit / Open editor link. The response is `immutable` with a 30-day max-age, so the editor's own request is a cache hit; if the warm-up is still in flight, the browser makes the second request wait for it rather than downloading twice. It requests exactly what the editor would, so it adds no Cloudinary work. Renditions are deliberately *not* generated for every upload: that would spend processing quota on videos that are never edited.
+- **No bandwidth contention.** The editor's preview video uses `preload="metadata"`, so it doesn't start buffering the whole video while the analysis audio downloads.
+- **An honest wait.** If no bytes have arrived after 4 s, the editor says Cloudinary is preparing the audio for the first time and that it's instant afterwards, instead of sitting silently at 0%.
+
 If decoding fails, which is most often a recording made without a microphone, the editor says the video has no audio track, rather than showing a raw decoder error.
 
 ### 28.5 Pause detection (`lib/media/silence.ts`)

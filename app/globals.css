@@ -1456,6 +1456,10 @@ body {
 .ed-state-title { font-size: 1.1rem; font-weight: 800; }
 .ed-state-note { font-size: 0.85rem; color: var(--ed-muted); line-height: 1.5; }
 .ed-state .ed-btn { align-self: center; }
+.ed-state-wait {
+  font-size: 0.82rem; line-height: 1.5; color: var(--ed-ink); padding: 10px 12px; border-radius: 12px;
+  background: var(--ed-accent-soft); border: 1px solid rgba(255, 67, 147, 0.2);
+}
 
 .ed-timeline { display: flex; flex-direction: column; gap: 8px; }
 .ed-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; font-size: 0.75rem; font-weight: 600; color: var(--ed-muted); }

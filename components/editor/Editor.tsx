@@ -53,6 +53,21 @@ function levelOf(cuts: Cut[], silences: Range[]): LevelState {
 export default function Editor({ data }: { data: EditorData }) {
   const analysis = useAudioAnalysis(data.videoUrl);
 
+  // Progress 0 means not one byte has arrived. That is normal for a moment,
+  // but past a few seconds it is almost always Cloudinary creating the audio
+  // rendition on first use (measured: 15.9 s for a 10-minute video; stored
+  // permanently after that), so say so instead of sitting silently at 0%.
+  const waitingForFirstByte = analysis.status === "loading" && analysis.progress === 0;
+  const [slowStart, setSlowStart] = useState(false);
+  useEffect(() => {
+    if (!waitingForFirstByte) {
+      setSlowStart(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowStart(true), 4000);
+    return () => clearTimeout(timer);
+  }, [waitingForFirstByte]);
+
   if (analysis.status !== "ready") {
     return (
       <div className="ed">
@@ -76,6 +91,12 @@ export default function Editor({ data }: { data: EditorData }) {
                 {analysis.progress !== null && ` · ${Math.round(analysis.progress * 100)}%`}. Everything after this
                 runs on your device.
               </p>
+              {slowStart && (
+                <p className="ed-state-wait" role="status">
+                  Cloudinary is preparing this video&apos;s audio for the first time. Long recordings can take up
+                  to a minute; it&apos;s instant every time after that.
+                </p>
+              )}
             </>
           ) : (
             <>
@@ -465,7 +486,10 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
             <video
               ref={videoRef}
               src={data.videoUrl}
-              preload="auto"
+              // "metadata", not "auto": buffering the whole video up front
+              // would compete with the analysis-audio download for bandwidth.
+              // Playback buffers on demand.
+              preload="metadata"
               playsInline
               onClick={togglePlay}
               onPlay={() => setPlaying(true)}

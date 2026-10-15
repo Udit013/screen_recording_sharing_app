@@ -4,6 +4,7 @@ import { daysAgo } from "@/lib/utils";
 import { deleteVideo, generateShareToken, revokeShareToken, updateVideoVisibility } from "@/lib/actions/video";
 import Image from "next/image";
 import Link from "next/link";
+import { prewarmAnalysisAudio } from "@/lib/media/audio";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -21,6 +22,7 @@ const VideoDetailHeader = ({
   ownerId,
   visibility,
   shareToken: initialShareToken,
+  videoUrl,
 }: VideoDetailHeaderProps) => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -163,7 +165,12 @@ const VideoDetailHeader = ({
               <Image src="/assets/icons/smiley.svg" alt="Share" width={20} height={20} />
             </button>
 
-            <Link href={`/video/${videoId}/edit`} className="edit-btn">
+            <Link
+              href={`/video/${videoId}/edit`}
+              className="edit-btn"
+              onPointerEnter={() => videoUrl && prewarmAnalysisAudio(videoUrl)}
+              onFocus={() => videoUrl && prewarmAnalysisAudio(videoUrl)}
+            >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12" />
               </svg>

@@ -77,6 +77,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
         ownerId={video.userId}
         visibility={video.visibility}
         shareToken={video.shareToken}
+        videoUrl={video.videoUrl}
       />
 
       {aiRunning && (
@@ -88,6 +89,7 @@ const VideoDetailPage = ({ params }: PageProps) => {
 
       <EditNudge
         videoId={video.videoId}
+        videoUrl={video.videoUrl}
         ownerId={video.userId}
         edl={video.edl}
         duration={video.duration}

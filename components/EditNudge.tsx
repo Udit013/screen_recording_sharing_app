@@ -6,9 +6,11 @@ import { authClient } from "@/lib/auth-client";
 import { mergeRanges, summarizeEdit } from "@/lib/media/edl";
 import type { StoredEdl } from "@/drizzle/schema";
 import { formatDuration } from "@/lib/utils";
+import { prewarmAnalysisAudio } from "@/lib/media/audio";
 
 interface EditNudgeProps {
   videoId: string;
+  videoUrl: string;
   ownerId: string;
   edl: StoredEdl | null;
   duration: number | null;
@@ -21,7 +23,7 @@ const dismissKey = (id: string) => `snapcast:edit-nudge-dismissed:${id}`;
  * editor (dismissible per video); edited ones show what the edit removed and a
  * way back in. Viewers never see it.
  */
-export default function EditNudge({ videoId, ownerId, edl, duration }: EditNudgeProps) {
+export default function EditNudge({ videoId, videoUrl, ownerId, edl, duration }: EditNudgeProps) {
   const { data: session } = authClient.useSession();
   const [dismissed, setDismissed] = useState(true);
 
@@ -34,6 +36,9 @@ export default function EditNudge({ videoId, ownerId, edl, duration }: EditNudge
   }, [videoId]);
 
   if (session?.user.id !== ownerId) return null;
+
+  // Start fetching the editor's audio on intent, so it's cached on arrival.
+  const warm = { onPointerEnter: () => prewarmAnalysisAudio(videoUrl), onFocus: () => prewarmAnalysisAudio(videoUrl) };
 
   const cuts = edl?.cuts ?? [];
   if (cuts.length > 0) {
@@ -53,7 +58,7 @@ export default function EditNudge({ videoId, ownerId, edl, duration }: EditNudge
           </span>
         </p>
         <div className="edit-nudge-actions">
-          <Link href={`/video/${videoId}/edit`} className="ed-btn">Edit again</Link>
+          <Link href={`/video/${videoId}/edit`} className="ed-btn" {...warm}>Edit again</Link>
         </div>
       </div>
     );
@@ -79,7 +84,7 @@ export default function EditNudge({ videoId, ownerId, edl, duration }: EditNudge
         >
           Not now
         </button>
-        <Link href={`/video/${videoId}/edit`} className="ed-btn is-primary">Open editor</Link>
+        <Link href={`/video/${videoId}/edit`} className="ed-btn is-primary" {...warm}>Open editor</Link>
       </div>
     </div>
   );
