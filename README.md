@@ -23,6 +23,8 @@
 2. **Edit by editing text.** Transcribe on your device, select the flubbed sentence, press ⌫. Click any pause chip in the transcript to keep or remove just that pause.
 3. **Ship it.** Edits are live on the video page and share link immediately (cuts are skipped during playback, so nothing re-encodes). Or **Export MP4**: a real file, rendered on your device's hardware encoder.
 
+Select any range to **copy a clip link** that plays just that part, or **export the clip** as its own MP4. Owners see a one-line invitation to the editor on unedited videos, and an "edited cut" summary on edited ones; press `?` in the editor for every shortcut.
+
 Every edit is non-destructive and undoable (⌘Z / ⇧⌘Z). The upload is never modified, and comments, notes and chapters stay anchored because cuts live in source time.
 
 ### How it works
@@ -65,6 +67,8 @@ From test recordings with known pauses, checked against ffmpeg:
 | Feature | Description |
 |---|---|
 | **One-take editor** | Pause tightening, transcript-based cutting, undo/redo, autosave, live edited playback, on-device MP4 export ([details](#the-one-take-editor)) |
+| **Clips** | Select any range in the editor → **Copy clip link** (`?t=12&end=40`, plays just that range with a "Watch full video" chip) or **Export clip** as an MP4 of only the kept material in it |
+| **Navigation** | Library / My videos / Collections in the navbar with an active state (icon-only on phones), and a context-aware **Back** that returns to the previous SnapCast page or, on a deep link, to a sensible parent |
 | **On-device transcription** | Whisper with word timestamps for recorded *and* uploaded videos; feeds search, the transcript tab and AI chapters |
 | **Screen Recording** | Browser-native MediaRecorder API — no plugins, no extensions |
 | **Webcam PiP Overlay** | Canvas API composites circular webcam over screen in real-time |
@@ -154,7 +158,7 @@ Cloudinary CDN  ←→  Neon PostgreSQL  ←→  Vercel Edge
 | Practice | Implementation |
 |---|---|
 | **CI pipeline** | GitHub Actions on every push/PR: type check → unit tests → production build |
-| **Unit tests** | 100 Vitest tests: the edit model (EDL math, undo/redo), pause detection on synthetic signals, Whisper alignment against real model output, edit-input sanitization, input-validation guards, access-control predicates, and core utilities |
+| **Unit tests** | 103 Vitest tests: the edit model (EDL math, undo/redo), pause detection on synthetic signals, Whisper alignment against real model output, edit-input sanitization, input-validation guards, access-control predicates, and core utilities |
 | **Strict builds** | Type and lint errors fail the build (no `ignoreBuildErrors`) |
 | **Input validation** | Every server action validates/clamps client input at the network boundary (`lib/validate.ts`) |
 | **Authorization** | Ownership checks on all mutations; signed-URL issuance blocked for other users' assets; the editor route and its actions return the same "not found" for missing and not-yours videos |
