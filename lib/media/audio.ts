@@ -61,7 +61,22 @@ export async function loadAnalysisAudio(
   onProgress: (fraction: number | null) => void = () => {},
   signal?: AbortSignal
 ): Promise<LoadedAudio> {
-  const data = await fetchWithProgress(audioRenditionUrl(videoUrl), onProgress, signal);
+  const url = audioRenditionUrl(videoUrl);
+  const warmed = warm.get(url);
+  let data: ArrayBuffer;
+  if (warmed) {
+    // Taken, not shared: decoding detaches the buffer. Progress stays at 0
+    // until it lands, so the editor's slow-first-load note still applies.
+    warm.delete(url);
+    try {
+      data = await warmed;
+      onProgress(1);
+    } catch {
+      data = await fetchWithProgress(url, onProgress, signal);
+    }
+  } else {
+    data = await fetchWithProgress(url, onProgress, signal);
+  }
   const bytes = data.byteLength;
   const ctx = new OfflineAudioContext(1, ANALYSIS_SAMPLE_RATE, ANALYSIS_SAMPLE_RATE);
   let buffer: AudioBuffer;
@@ -86,22 +101,38 @@ export async function loadAnalysisAudio(
   return { samples, sampleRate: buffer.sampleRate, duration: buffer.duration, bytes };
 }
 
-const warmed = new Set<string>();
+// Downloads started on intent, keyed by rendition URL. Shared in memory
+// rather than left to the HTTP cache: measured on the live site, an 8.5 MB
+// rendition was not cached by the browser, so the editor downloaded it a
+// second time. Handing over the in-flight promise guarantees one download.
+const warm = new Map<string, Promise<ArrayBuffer>>();
+/** URLs warmed recently, so hovering again after a visit doesn't re-download. */
+const recentlyWarmed = new Set<string>();
+/** Hovered but never opened: release the buffer instead of holding it. */
+const WARM_TTL_MS = 120_000;
 
 /**
  * Starts downloading a video's analysis audio before the editor opens, on a
- * signal of intent (hovering or focusing an Edit link). The rendition is
- * served with `Cache-Control: immutable, max-age=30d`, so the editor's own
- * request is answered from the browser cache — and if this request is still
- * in flight, the browser makes the second one wait for it rather than
- * downloading twice. It requests exactly what the editor would a moment
- * later, so it adds no extra Cloudinary work. Fire-and-forget; once per URL.
+ * signal of intent (hovering or focusing an Edit link). The editor opens via
+ * client-side navigation, so loadAnalysisAudio picks up this same download.
+ * It is the request the editor would make a moment later, so it adds no
+ * Cloudinary work. Fire-and-forget; once per URL.
  */
 export function prewarmAnalysisAudio(videoUrl: string): void {
   const url = audioRenditionUrl(videoUrl);
-  if (warmed.has(url)) return;
-  warmed.add(url);
-  fetch(url)
-    .then((r) => r.arrayBuffer())
-    .catch(() => warmed.delete(url));
+  if (recentlyWarmed.has(url)) return;
+  recentlyWarmed.add(url);
+  const download = fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`Couldn't load audio (HTTP ${r.status})`);
+    return r.arrayBuffer();
+  });
+  warm.set(url, download);
+  download.catch(() => {
+    warm.delete(url);
+    recentlyWarmed.delete(url);
+  });
+  setTimeout(() => {
+    warm.delete(url);
+    recentlyWarmed.delete(url);
+  }, WARM_TTL_MS);
 }
