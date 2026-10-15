@@ -38,6 +38,9 @@ interface VideoPlayerProps {
   onReady?: () => void;
 }
 
+/** How far past a clip's end still counts as "reached the end" (covers ~4 Hz timeupdate in background tabs). */
+const CLIP_END_SLACK = 0.75;
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const CONTROLS_HIDE_MS = 2600;
 
@@ -67,6 +70,8 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const [hasIncrementedView, setHasIncrementedView] = useState(false);
     const [pipSupported, setPipSupported] = useState(false);
     // A shared clip (?t=12&end=40): play just that range, in source time.
+    // Reaching the end pauses (and play replays the clip); seeking clearly
+    // past the end means the viewer wants the full video, so clip mode ends.
     const [clip, setClip] = useState<{ start: number; end: number } | null>(null);
     const clipRef = useRef<{ start: number; end: number } | null>(null);
     useEffect(() => {
@@ -180,10 +185,11 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       if (v.paused) {
         // Replaying a finished clip starts it again rather than doing nothing.
         const c = clipRef.current;
-        if (c && v.currentTime >= c.end - 0.1) v.currentTime = c.start;
+        if (c && v.currentTime > c.end + CLIP_END_SLACK) exitClip();
+        else if (c && v.currentTime >= c.end - 0.1) v.currentTime = c.start;
         v.play().catch(() => {});
       } else v.pause();
-    }, []);
+    }, [exitClip]);
 
     // On touch devices the first tap while controls are hidden should reveal
     // them (like YouTube/Loom), not immediately pause playback.
@@ -303,7 +309,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       const v = videoRef.current;
       if (!v || v.paused) return;
       const c = clipRef.current;
-      if (c && v.currentTime >= c.end - 0.02) {
+      if (c && v.currentTime > c.end + CLIP_END_SLACK) {
+        exitClip();
+      } else if (c && v.currentTime >= c.end - 0.02) {
         v.pause();
         return;
       }
@@ -317,7 +325,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       } else {
         v.currentTime = next;
       }
-    }, [flushWatch]);
+    }, [flushWatch, exitClip]);
 
     useEffect(() => {
       if (!playing || (!isEdited && !clip)) return;

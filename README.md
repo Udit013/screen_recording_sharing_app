@@ -67,7 +67,7 @@ From test recordings with known pauses, checked against ffmpeg:
 | Feature | Description |
 |---|---|
 | **One-take editor** | Pause tightening, transcript-based cutting, undo/redo, autosave, live edited playback, on-device MP4 export ([details](#the-one-take-editor)) |
-| **Clips** | Select any range in the editor → **Copy clip link** (`?t=12&end=40`, plays just that range with a "Watch full video" chip) or **Export clip** as an MP4 of only the kept material in it |
+| **Clips** | Select any range in the editor → **Copy clip link** (`?t=12&end=40`, plays just that range with a "Watch full video" chip; seeking past the end switches to the full video) or **Export clip** as an MP4 of only the kept material in it |
 | **Navigation** | Library / My videos / Collections in the navbar with an active state (icon-only on phones), and a context-aware **Back** that returns to the previous SnapCast page or, on a deep link, to a sensible parent |
 | **On-device transcription** | Whisper with word timestamps for recorded *and* uploaded videos; feeds search, the transcript tab and AI chapters |
 | **Screen Recording** | Browser-native MediaRecorder API — no plugins, no extensions |
@@ -158,7 +158,7 @@ Cloudinary CDN  ←→  Neon PostgreSQL  ←→  Vercel Edge
 | Practice | Implementation |
 |---|---|
 | **CI pipeline** | GitHub Actions on every push/PR: type check → unit tests → production build |
-| **Unit tests** | 103 Vitest tests: the edit model (EDL math, undo/redo), pause detection on synthetic signals, Whisper alignment against real model output, edit-input sanitization, input-validation guards, access-control predicates, and core utilities |
+| **Unit tests** | 108 Vitest tests: the edit model (EDL math, undo/redo, clip ranges), in-app back navigation, pause detection on synthetic signals, Whisper alignment against real model output, edit-input sanitization, input-validation guards, access-control predicates, and core utilities |
 | **Strict builds** | Type and lint errors fail the build (no `ignoreBuildErrors`) |
 | **Input validation** | Every server action validates/clamps client input at the network boundary (`lib/validate.ts`) |
 | **Authorization** | Ownership checks on all mutations; signed-URL issuance blocked for other users' assets; the editor route and its actions return the same "not found" for missing and not-yours videos |
