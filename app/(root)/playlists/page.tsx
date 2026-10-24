@@ -5,7 +5,7 @@ import { SharedHeader, PlaylistsManager } from "@/components";
 const PlaylistsPage = () => {
   return (
     <main className="wrapper page">
-      <SharedHeader subHeader="Your library" title="Collections" />
+      <SharedHeader subHeader="Your library" title="Collections" showSearch={false} />
       <PlaylistsManager />
     </main>
   );

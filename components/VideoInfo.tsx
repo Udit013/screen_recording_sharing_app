@@ -243,20 +243,49 @@ const VideoInfo = ({
 
   return (
     <section className="video-info">
-      <nav>
+      <div
+        role="tablist"
+        aria-label="Video details"
+        onKeyDown={(e) => {
+          // Arrow keys move between tabs, as in the WAI-ARIA tabs pattern.
+          const i = infos.indexOf(activeTab);
+          let next = i;
+          if (e.key === "ArrowRight") next = (i + 1) % infos.length;
+          else if (e.key === "ArrowLeft") next = (i - 1 + infos.length) % infos.length;
+          else if (e.key === "Home") next = 0;
+          else if (e.key === "End") next = infos.length - 1;
+          else return;
+          e.preventDefault();
+          setActiveTab(infos[next]);
+          document.getElementById(`video-tab-${infos[next].replace(/\s+/g, "-")}`)?.focus();
+        }}
+      >
         {infos.map((item) => (
           <button
             key={item}
+            id={`video-tab-${item.replace(/\s+/g, "-")}`}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === item}
+            aria-controls="video-tabpanel"
+            tabIndex={activeTab === item ? 0 : -1}
             className={cn({
               "text-pink-100 border-b-2 border-pink-100": activeTab === item,
             })}
             onClick={() => setActiveTab(item)}
           >
-            {item}
+            {item === "ai summary" ? "AI summary" : item}
           </button>
         ))}
-      </nav>
-      {renderContent()}
+      </div>
+      <div
+        role="tabpanel"
+        id="video-tabpanel"
+        aria-labelledby={`video-tab-${activeTab.replace(/\s+/g, "-")}`}
+        tabIndex={0}
+      >
+        {renderContent()}
+      </div>
     </section>
   );
 };

@@ -5,6 +5,7 @@ import { deleteVideo, generateShareToken, revokeShareToken, updateVideoVisibilit
 import Image from "next/image";
 import Link from "next/link";
 import { prewarmAnalysisAudio } from "@/lib/media/audio";
+import { useModal } from "@/lib/useModal";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -95,19 +96,25 @@ const VideoDetailHeader = ({
   };
 
   const copyVideoLink = () => {
-    navigator.clipboard.writeText(`${window.location.origin}/video/${videoId}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 3000);
+    navigator.clipboard
+      ?.writeText(`${window.location.origin}/video/${videoId}`)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 3000);
+      })
+      .catch(() => {});
   };
 
+  const shareDialogRef = useModal<HTMLDivElement>(showShareModal, () => setShowShareModal(false));
+
   const VisibilityTrigger = (
-    <div className="visibility-trigger">
-      <div>
-        <Image src="/assets/icons/eye.svg" alt="Views" width={16} height={16} className="mt-0.5" />
-        <p>{visibilityState}</p>
-      </div>
-      <Image src="/assets/icons/arrow-down.svg" alt="Arrow Down" width={16} height={16} />
-    </div>
+    <span className="visibility-trigger">
+      <span className="visibility-trigger-label">
+        <Image src="/assets/icons/eye.svg" alt="" aria-hidden width={16} height={16} />
+        <span className="visibility-trigger-value">{visibilityState}</span>
+      </span>
+      <Image src="/assets/icons/arrow-down.svg" alt="" aria-hidden width={16} height={16} />
+    </span>
   );
 
   const expiryLabel = shareExpiry
@@ -121,16 +128,16 @@ const VideoDetailHeader = ({
       <aside className="user-info">
         <h1>{title}</h1>
         <figure>
-          <button onClick={() => router.push(`/profile/${ownerId}`)}>
+          <Link href={`/profile/${ownerId}`} className="owner-link">
             <ImageWithFallback
               src={userImg ?? ""}
-              alt={username ?? "User"}
+              alt=""
               width={24}
               height={24}
               className="rounded-full"
             />
-            <h2>{username ?? "Guest"}</h2>
-          </button>
+            <span>{username ?? "Guest"}</span>
+          </Link>
           <figcaption>
             <span className="mt-1">・</span>
             <p>{daysAgo(createdAt)}</p>
@@ -142,27 +149,34 @@ const VideoDetailHeader = ({
         {session && <AddToPlaylist videoId={videoId} />}
 
         <button
+          type="button"
           onClick={copyVideoLink}
-          title="Copy video link"
-          aria-label="Copy video link"
+          className="icon-btn"
+          title={copied ? "Link copied" : "Copy video link"}
+          aria-label={copied ? "Link copied" : "Copy video link"}
         >
           <Image
             src={copied ? "/assets/icons/checkmark.svg" : "/assets/icons/link.svg"}
-            alt="Copy Link"
-            width={24}
-            height={24}
+            alt=""
+            aria-hidden
+            width={20}
+            height={20}
           />
         </button>
 
         {isOwner && (
           <>
             <button
+              type="button"
               onClick={() => setShowShareModal(true)}
-              className="share-btn"
-              title="Share with expiry link"
-              aria-label="Share with expiry link"
+              className="icon-btn"
+              title="Share with a time-limited link"
+              aria-label="Share with a time-limited link"
+              aria-haspopup="dialog"
             >
-              <Image src="/assets/icons/smiley.svg" alt="Share" width={20} height={20} />
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 3v12M8 7l4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
+              </svg>
             </button>
 
             <Link
@@ -194,6 +208,7 @@ const VideoDetailHeader = ({
                   selectedOption={visibilityState}
                   onOptionSelect={handleVisibilityChange}
                   triggerElement={VisibilityTrigger}
+                  ariaLabel="Video visibility"
                 />
               )}
             </div>
@@ -203,9 +218,17 @@ const VideoDetailHeader = ({
 
       {showShareModal && (
         <div className="share-modal-overlay" onClick={() => setShowShareModal(false)}>
-          <div className="share-modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            ref={shareDialogRef}
+            className="share-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="share-dialog-title"
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="share-modal-header">
-              <h3>Share this video</h3>
+              <h3 id="share-dialog-title">Share this video</h3>
               <button
                 onClick={() => setShowShareModal(false)}
                 aria-label="Close share dialog"
@@ -221,8 +244,10 @@ const VideoDetailHeader = ({
                   <div className="share-url-row">
                     <input
                       readOnly
+                      aria-label="Share link"
                       value={`${window.location.origin}/share/${shareToken}`}
                       className="share-url-input"
+                      onFocus={(e) => e.currentTarget.select()}
                     />
                     <button onClick={copyShareUrl} className="share-copy-btn">
                       {shareUrlCopied ? "Copied!" : "Copy"}

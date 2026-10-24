@@ -38,7 +38,7 @@ const Pagination = ({
   };
 
   return (
-    <section className="pagination">
+    <nav className="pagination" aria-label="Pagination">
       <button
         onClick={() => navigateToPage(currentPage - 1)}
         className={cn("nav-button", {
@@ -49,7 +49,8 @@ const Pagination = ({
       >
         <Image
           src="/assets/icons/arrow-left.svg"
-          alt="Previous"
+          alt=""
+          aria-hidden
           width={16}
           height={16}
         />
@@ -59,11 +60,13 @@ const Pagination = ({
       <div>
         {pages.map((page, index) =>
           page === "..." ? (
-            <span key={`ellipsis-${index}`}>...</span>
+            <span key={`ellipsis-${index}`} aria-hidden>…</span>
           ) : (
             <button
               key={`page-${page}`}
               onClick={() => navigateToPage(page as number)}
+              aria-label={`Page ${page}`}
+              aria-current={currentPage === page ? "page" : undefined}
               className={cn({
                 "bg-pink-100 text-white": currentPage === page,
               })}
@@ -85,12 +88,13 @@ const Pagination = ({
         Next
         <Image
           src="/assets/icons/arrow-right.svg"
-          alt="next"
+          alt=""
+          aria-hidden
           width={16}
           height={16}
         />
       </button>
-    </section>
+    </nav>
   );
 };
 

@@ -2,68 +2,102 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
 
+const POINTS = [
+  {
+    title: "Edit by editing text",
+    body: "Delete a flubbed sentence from the transcript and it's gone from the video.",
+    icon: "M4 6h16M4 12h10M4 18h14",
+  },
+  {
+    title: "Tighten every pause",
+    body: "One click removes the dead air. You see exactly how many seconds it saves.",
+    icon: "M5 4v16M19 4v16M9 12h6",
+  },
+  {
+    title: "Runs on your device",
+    body: "Transcription and video rendering happen in your browser. Nothing to install.",
+    icon: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z",
+  },
+];
+
 const SignIn = () => {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSignIn = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      // On success the browser leaves for Google, so `pending` stays true:
+      // the button keeps saying so instead of looking dead during the redirect.
+      const result = await authClient.signIn.social({ provider: "google" });
+      if (result?.error) throw new Error(result.error.message);
+    } catch {
+      setPending(false);
+      setError("Couldn't start Google sign-in. Check your connection and try again.");
+    }
+  };
+
   return (
-    <main className="sign-in">
-      <aside className="testimonial">
-        <Link href="/">
-          <Image
-            src="/assets/icons/logo.svg"
-            alt="SnapCast Logo"
-            width={32}
-            height={32}
-          />
-          <h1>SnapCast</h1>
+    <main className="signin">
+      <div className="overlay" />
+
+      <section className="signin-panel" aria-labelledby="signin-title">
+        <Link href="/" className="signin-brand">
+          <Image src="/assets/icons/logo.svg" alt="" aria-hidden width={36} height={36} />
+          <span>SnapCast</span>
         </Link>
 
-        <div className="description">
-          <section>
-            <p>
-              Record a demo in one take, then fix it like a doc: delete words
-              from the transcript, tighten every pause, and share a clean cut.
-              It all runs in your browser, with nothing to install.
-            </p>
-          </section>
-        </div>
-      </aside>
-
-      <aside className="google-sign-in">
-        <section>
-          <Link href="/">
-            <Image
-              src="/assets/icons/logo.svg"
-              alt="SnapCast Logo"
-              width={40}
-              height={40}
-            />
-            <h1>SnapCast</h1>
-          </Link>
-          <p>
-            Create and share your very first <span>SnapCast video</span> in no
-            time!
-          </p>
+        <div className="signin-card">
+          <h2 id="signin-title">Welcome to SnapCast</h2>
+          <p>Sign in to record, edit and share your videos.</p>
 
           <button
-            onClick={async () => {
-              return await authClient.signIn.social({
-                provider: "google",
-              });
-            }}
+            type="button"
+            onClick={handleSignIn}
+            disabled={pending}
+            aria-busy={pending}
+            className="signin-google"
           >
-            <Image
-              src="/assets/icons/google.svg"
-              alt="Google Icon"
-              width={22}
-              height={22}
-            />
-            <span>Sign in with Google</span>
+            <Image src="/assets/icons/google.svg" alt="" aria-hidden width={22} height={22} />
+            <span>{pending ? "Opening Google…" : "Continue with Google"}</span>
           </button>
-        </section>
-      </aside>
-      <div className="overlay" />
+
+          <p className="signin-error" role="alert">
+            {error}
+          </p>
+          <p className="signin-note">Free to use. We only read your name, email and photo.</p>
+        </div>
+      </section>
+
+      <section className="signin-pitch" aria-label="About SnapCast">
+        <h1>
+          Record messy. <span>Ship clean.</span>
+        </h1>
+        <p className="signin-lede">
+          Record a demo in one take, then fix it like a doc. Built for engineers and teams who
+          explain things on screen.
+        </p>
+        <ul>
+          {POINTS.map((p) => (
+            <li key={p.title}>
+              <span className="signin-icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d={p.icon} />
+                </svg>
+              </span>
+              <div>
+                <h3>{p.title}</h3>
+                <p>{p.body}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
     </main>
   );
 };

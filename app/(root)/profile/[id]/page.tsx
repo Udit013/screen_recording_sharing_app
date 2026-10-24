@@ -31,6 +31,7 @@ const ProfilePage = async ({ params, searchParams }: ParamsWithSearch) => {
         subHeader={`${count} ${count === 1 ? "video" : "videos"}`}
         title={user?.name}
         userImg={user?.image ?? ""}
+        showActions={isOwner}
       />
 
       {isOwner && <ChannelAnalyticsPanel userId={id} />}

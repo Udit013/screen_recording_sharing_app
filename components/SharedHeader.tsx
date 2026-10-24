@@ -10,7 +10,13 @@ import ImageWithFallback from "./ImageWithFallback";
 import DropdownList from "./DropdownList";
 import { updateURLParams } from "@/lib/utils";
 
-const SharedHeader = ({ subHeader, title, userImg }: SharedHeaderProps) => {
+const SharedHeader = ({
+  subHeader,
+  title,
+  userImg,
+  showSearch = true,
+  showActions = true,
+}: SharedHeaderProps) => {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -52,23 +58,13 @@ const SharedHeader = ({ subHeader, title, userImg }: SharedHeaderProps) => {
   };
 
   const renderFilterTrigger = () => (
-    <div className="filter-trigger">
-      <figure>
-        <Image
-          src="/assets/icons/hamburger.svg"
-          alt="hamburger"
-          width={14}
-          height={14}
-        />
+    <span className="filter-trigger">
+      <span className="filter-trigger-label">
+        <Image src="/assets/icons/hamburger.svg" alt="" aria-hidden width={14} height={14} />
         <span>{selectedFilter}</span>
-      </figure>
-      <Image
-        src="/assets/icons/arrow-down.svg"
-        alt="arrow-down"
-        width={20}
-        height={20}
-      />
-    </div>
+      </span>
+      <Image src="/assets/icons/arrow-down.svg" alt="" aria-hidden width={20} height={20} />
+    </span>
   );
 
   return (
@@ -78,7 +74,7 @@ const SharedHeader = ({ subHeader, title, userImg }: SharedHeaderProps) => {
           {userImg && (
             <ImageWithFallback
               src={userImg}
-              alt="user"
+              alt=""
               width={66}
               height={66}
               className="rounded-full"
@@ -89,41 +85,52 @@ const SharedHeader = ({ subHeader, title, userImg }: SharedHeaderProps) => {
             <h1>{title}</h1>
           </article>
         </figure>
-        <aside>
-          <Link href="/upload">
-            <Image
-              src="/assets/icons/upload.svg"
-              alt="upload"
-              width={16}
-              height={16}
+        {showActions && (
+          <aside>
+            <Link href="/upload">
+              <Image src="/assets/icons/upload.svg" alt="" aria-hidden width={16} height={16} />
+              <span>Upload a video</span>
+            </Link>
+            <RecordScreen />
+          </aside>
+        )}
+      </section>
+      {showSearch && (
+        <section className="search-filter">
+          <form className="search" role="search" onSubmit={(e) => e.preventDefault()}>
+            <label htmlFor="video-search" className="sr-only">
+              Search videos by title, transcript or summary
+            </label>
+            <input
+              id="video-search"
+              type="search"
+              name="query"
+              autoComplete="off"
+              placeholder="Search titles, transcripts and summaries…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
             />
-            <span>Upload a video</span>
-          </Link>
-          <RecordScreen />
-        </aside>
-      </section>
-      <section className="search-filter">
-        <div className="search">
-          <input
-            type="text"
-            placeholder="Search for videos, tags, folders..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            <Image src="/assets/icons/search.svg" alt="" aria-hidden width={16} height={16} />
+            {searchQuery && (
+              <button
+                type="button"
+                className="search-clear"
+                aria-label="Clear search"
+                onClick={() => setSearchQuery("")}
+              >
+                ×
+              </button>
+            )}
+          </form>
+          <DropdownList
+            options={filterOptions}
+            selectedOption={selectedFilter}
+            onOptionSelect={handleFilterChange}
+            triggerElement={renderFilterTrigger()}
+            ariaLabel="Sort videos"
           />
-          <Image
-            src="/assets/icons/search.svg"
-            alt="search"
-            width={16}
-            height={16}
-          />
-        </div>
-        <DropdownList
-          options={filterOptions}
-          selectedOption={selectedFilter}
-          onOptionSelect={handleFilterChange}
-          triggerElement={renderFilterTrigger()}
-        />
-      </section>
+        </section>
+      )}
     </header>
   );
 };

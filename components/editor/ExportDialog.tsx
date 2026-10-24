@@ -5,6 +5,7 @@ import { useExporter } from "@/lib/media/useExporter";
 import { EXPORT_PRESETS, type ExportPreset } from "@/lib/media/export-presets";
 import type { Range } from "@/lib/media/edl";
 import { formatDuration } from "@/lib/utils";
+import { useModal } from "@/lib/useModal";
 
 interface ExportDialogProps {
   videoUrl: string;
@@ -33,17 +34,15 @@ export default function ExportDialog({ videoUrl, title, segments, editedSeconds,
       .catch(() => setSourceBytes(null));
   }, [videoUrl]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+  // Esc closes (unless a render is running), Tab stays inside, focus returns
+  // to the button that opened the dialog.
+  const dialogRef = useModal<HTMLDivElement>(true, () => { if (!busy) onClose(); });
 
   const fileName = `${title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "snapcast"}-${selection ? "clip" : "edited"}.mp4`;
 
   return (
     <div className="ex-overlay" onClick={() => !busy && onClose()}>
-      <div className="ex-dialog" role="dialog" aria-modal="true" aria-labelledby="ex-title" onClick={(e) => e.stopPropagation()}>
+      <div ref={dialogRef} className="ex-dialog" role="dialog" aria-modal="true" aria-labelledby="ex-title" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
         <header className="ex-head">
           <div>
             <h2 id="ex-title">{selection ? "Export clip" : "Export edited video"}</h2>

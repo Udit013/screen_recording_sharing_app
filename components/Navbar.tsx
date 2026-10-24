@@ -53,11 +53,12 @@ const Navbar = () => {
         <Link href="/" className="navbar-brand">
           <Image
             src="/assets/icons/logo.svg"
-            alt="SnapCast Logo"
+            alt=""
+            aria-hidden
             width={32}
             height={32}
           />
-          <h1>SnapCast</h1>
+          <span className="navbar-brand-name">SnapCast</span>
         </Link>
 
         {user && (

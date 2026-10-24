@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import {
   VideoDetailHeader,
   VideoInfo,
@@ -11,6 +10,7 @@ import { getVideoById, processVideoAI } from "@/lib/actions/video";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VideoPlayerHandle } from "@/components/VideoPlayer";
 import BackLink from "@/components/BackLink";
+import EmptyState from "@/components/EmptyState";
 import EditNudge from "@/components/EditNudge";
 
 type PageProps = {
@@ -18,9 +18,9 @@ type PageProps = {
 };
 
 const VideoDetailPage = ({ params }: PageProps) => {
-  const router = useRouter();
   const [videoId, setVideoId] = useState<string | null>(null);
   const [videoData, setVideoData] = useState<VideoWithUserResult | null>(null);
+  const [missing, setMissing] = useState(false);
   const playerRef = useRef<VideoPlayerHandle>(null);
   const aiTriggered = useRef(false);
   const [aiRunning, setAiRunning] = useState(false);
@@ -31,11 +31,13 @@ const VideoDetailPage = ({ params }: PageProps) => {
 
   useEffect(() => {
     if (!videoId) return;
-    getVideoById(videoId).then((data) => {
-      if (!data) router.replace("/");
-      else setVideoData(data as VideoWithUserResult);
-    });
-  }, [videoId, router]);
+    getVideoById(videoId)
+      .then((data) => {
+        if (!data) setMissing(true);
+        else setVideoData(data as VideoWithUserResult);
+      })
+      .catch(() => setMissing(true));
+  }, [videoId]);
 
   const handleVideoReady = useCallback(async () => {
     if (!videoId || aiTriggered.current) return;
@@ -53,12 +55,38 @@ const VideoDetailPage = ({ params }: PageProps) => {
     }
   }, [videoId, videoData?.video.processingStatus]);
 
-  if (!videoData) {
+  if (missing) {
     return (
       <main className="wrapper page">
-        <div className="flex items-center justify-center h-64">
-          <p className="text-gray-100">Loading…</p>
+        <BackLink fallbackHref="/" fallbackLabel="Library" />
+        <EmptyState
+          icon="/assets/icons/video.svg"
+          title="This video isn't available"
+          description="It may be private, it may have been deleted, or the link may be wrong."
+        />
+      </main>
+    );
+  }
+
+  if (!videoData) {
+    // Same silhouette as the loaded page, so nothing jumps when it arrives.
+    return (
+      <main className="wrapper page" aria-busy="true" aria-label="Loading video">
+        <div className="skeleton skeleton-line w-16" />
+        <div className="flex flex-col gap-3">
+          <div className="skeleton skeleton-title w-3/4 max-w-xl" />
+          <div className="skeleton skeleton-line w-48" />
         </div>
+        <section className="video-details">
+          <div className="content">
+            <div className="skeleton video-skeleton" />
+          </div>
+          <div className="flex flex-col gap-4 lg:max-w-[350px] xl:max-w-[410px] w-full">
+            <div className="skeleton skeleton-line w-full" />
+            <div className="skeleton skeleton-line w-5/6" />
+            <div className="skeleton skeleton-line w-2/3" />
+          </div>
+        </section>
       </main>
     );
   }

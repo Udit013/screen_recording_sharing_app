@@ -148,6 +148,10 @@ declare global {
     subHeader: string;
     title: string;
     userImg?: string;
+    /** Search and sort only apply to video lists. Default true. */
+    showSearch?: boolean;
+    /** Upload / Record buttons. Default true; off on other people's profiles. */
+    showActions?: boolean;
   }
 
   interface Params {
@@ -168,6 +172,8 @@ declare global {
     selectedOption: string;
     onOptionSelect: (option: string) => void;
     triggerElement: ReactNode;
+    /** Names the control for screen readers, e.g. "Sort videos". */
+    ariaLabel?: string;
   }
 
   interface EmptyStateProps {

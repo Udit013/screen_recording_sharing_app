@@ -58,7 +58,7 @@ export default function EditNudge({ videoId, videoUrl, ownerId, edl, duration }:
           </span>
         </p>
         <div className="edit-nudge-actions">
-          <Link href={`/video/${videoId}/edit`} className="ed-btn" {...warm}>Edit again</Link>
+          <Link href={`/video/${videoId}/edit`} className="edit-nudge-link" {...warm}>Edit again</Link>
         </div>
       </div>
     );

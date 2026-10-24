@@ -7,8 +7,13 @@ const RootLayout = ({
 }>) => {
   return (
     <div>
+      <a href="#main-content" className="skip-link">
+        Skip to content
+      </a>
       <Navbar />
-      {children}
+      <div id="main-content" tabIndex={-1}>
+        {children}
+      </div>
     </div>
   );
 };
