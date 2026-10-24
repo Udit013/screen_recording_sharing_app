@@ -21,7 +21,7 @@ import { auth } from "@/lib/auth";
 import { doesContentMatch, getOrderByClause } from "@/lib/utils";
 import { getSignedUploadParams, deleteCloudinaryResource } from "@/lib/cloudinary";
 import { SHARE_TOKEN_EXPIRY_DAYS } from "@/constants";
-import { analyzeVideoContent, generateChapters } from "@/lib/gemini";
+import { analyzeVideoContent, generateChapters, isGeminiConfigured } from "@/lib/gemini";
 import {
   requiredString,
   assertVisibility,
@@ -364,7 +364,8 @@ export const processVideoAI = withError(async (videoId: string) => {
     // The two Gemini calls are independent, so they run concurrently rather
     // than back to back — roughly halving total AI latency on a video that
     // gets both. Both helpers swallow their own errors and resolve to null,
-    // so Promise.all cannot reject here.
+    // so Promise.all cannot reject here (which is why a failure has to be
+    // detected from the null result below).
     const [aiResult, aiChapters] = await Promise.all([
       analyzeVideoContent(context),
       wantsChapters
@@ -377,20 +378,27 @@ export const processVideoAI = withError(async (videoId: string) => {
         : Promise.resolve(null),
     ]);
 
+    // A configured AI that returned nothing for real content failed (a retired
+    // model, quota, an outage). Recording that as "ready" is permanent, since
+    // ready videos are never reprocessed, and it hid exactly this: a retired
+    // model left every video without a summary. "failed" is retried the next
+    // time the video is opened. Without a key there is nothing to retry.
+    const aiFailed = isGeminiConfigured() && context.trim().length > 0 && aiResult === null;
+
     await db
       .update(videos)
       .set({
         aiSummary: aiResult?.summary ?? existing.aiSummary ?? null,
         tags: aiResult?.tags?.length ? aiResult.tags : (existing.tags ?? []),
         chapters: aiChapters ?? existing.chapters ?? [],
-        processingStatus: "ready",
+        processingStatus: aiFailed ? "failed" : "ready",
         processingStartedAt: null,
         updatedAt: new Date(),
       })
       .where(eq(videos.videoId, videoId));
 
     revalidatePaths([`/video/${videoId}`]);
-    return { processed: true };
+    return { processed: !aiFailed };
   } catch {
     await db
       .update(videos)
