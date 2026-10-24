@@ -38,6 +38,7 @@ Every claim in this document is grounded in the actual code in this repository a
 26. [Interview Question Bank](#26-interview-question-bank)
 27. [Full Walkthrough: A Day in the Life of a Video](#27-full-walkthrough-a-day-in-the-life-of-a-video)
 28. [The One-Take Editor](#28-the-one-take-editor)
+29. [Accessibility and responsive baseline](#29-accessibility-and-responsive-baseline)
 
 ---
 
@@ -164,7 +165,7 @@ Every one of these steps is implemented in a real file, and the rest of this doc
 | **ORM** | Drizzle ORM | Type-safe SQL query builder — the compiler catches a typo'd column name before it ever reaches the database |
 | **Auth** | better-auth + Google OAuth | Session/cookie/OAuth handling is security-critical and easy to get wrong; this delegates it to a maintained library instead of writing it from scratch |
 | **Video storage/CDN** | Cloudinary | Free tier, handles video transcoding, thumbnail generation, and global delivery — this app would otherwise need its own file storage and CDN |
-| **AI** | Google Gemini 2.0 Flash | Free tier, fast, cheap, good enough for summarization-class tasks (this is not a chat assistant — it's called once per video, not conversationally) |
+| **AI** | Google Gemini Flash (model chain) | Free tier, fast, cheap, good enough for summarization-class tasks (this is not a chat assistant — it's called once per video, not conversationally) |
 | **Speech-to-text** | Browser-native Web Speech API | $0 cost, zero backend infrastructure, works entirely client-side during recording |
 | **Deployment** | Vercel | Native Next.js hosting, automatic HTTPS, serverless functions for Server Actions |
 
@@ -759,25 +760,38 @@ Three important design decisions live in this one function:
 2. **Chapters have no such fallback — they require a real transcript.** There's no meaningful way to generate topic-boundary chapters from a title and description alone; chapters need actual spoken content with timestamps to segment. So `aiChapters` stays `null` unless `transcriptSegments.length > 0`.
 3. **Manual chapters always win.** If the video owner already added even one chapter by hand (via `VideoChapters.tsx`), `hasManualChapters` is true and the AI chapter step is skipped entirely — the app never silently overwrites a human's work.
 
-### 8.3 `analyzeVideoContent` — the summary/tags prompt
+### 8.3 `analyzeVideoContent` — the summary/tags prompt, and the model chain
 
 ```ts
+const DEFAULT_MODELS = ["gemini-3.5-flash", "gemini-2.5-flash"];       // GEMINI_MODEL overrides
+
+async function generateText(prompt: string): Promise<string | null> {
+  for (const name of geminiModels()) {
+    try {
+      return (await genAI.getGenerativeModel({ model: name }).generateContent(prompt)).response.text().trim();
+    } catch (err) {
+      console.error(`[gemini] ${name} failed (HTTP ${status}): ...`);     // never the prompt or reply
+      if (![404, 429, 500, 503].includes(status)) return null;           // not a model problem: stop
+    }
+  }
+  return null;
+}
+
 export async function analyzeVideoContent(context: string): Promise<AiVideoAnalysis | null> {
-  const genAI = getClient();
-  if (!genAI || !context.trim()) return null;
-  try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    const prompt = `Analyze this video content and respond with ONLY valid JSON...`;
-    const result = await model.generateContent(prompt);
-    const cleaned = result.response.text().trim()
-      .replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-    const parsed = JSON.parse(cleaned) as AiVideoAnalysis;
-    return { summary: ..., tags: ... };
-  } catch { return null; }
+  if (!isGeminiConfigured() || !context.trim()) return null;
+  const text = await generateText(`Analyze this video content and respond with ONLY valid JSON...`);
+  ...JSON.parse(stripFences(text)) → { summary, tags }
 }
 ```
 
-**Why strip markdown code fences before parsing?** LLMs frequently wrap JSON output in \`\`\`json ... \`\`\` blocks even when explicitly told not to — this is a known, common quirk, so the `.replace()` calls defensively strip that formatting before attempting `JSON.parse`. **Why wrap the whole thing in try/catch and return `null` on any failure?** Because an LLM's output is fundamentally untrusted, free-form text — it might not be valid JSON at all, or might be missing an expected field. The caller (`processVideoAI`) is written to treat `null` as "AI didn't produce anything usable this time," not as a fatal error — the video still saves successfully, just without an AI summary.
+**Why a chain, and why these two models.** Google retires Gemini models on a schedule, and `gemini-2.0-flash` was shut down while this app still called it. Every `generateContent` returned 404, both helpers swallowed the error and returned `null`, and `processVideoAI` stored each video as `ready` with no summary and no chapters, which is permanent because ready videos are never reprocessed. Nothing was logged, so it went unnoticed. The fix has four parts:
+
+1. **A chain with fallback.** A retired model (404), exhausted quota (429) or outage (503) falls through to the next model; anything else (a bad key, a blocked prompt) stops at once so a failing request doesn't spend more quota. `GEMINI_MODEL` overrides the list without a deploy of code.
+2. **Defaults chosen by measurement, not by name.** With this app's real prompt, `gemini-3.5-flash` took 3.8 s, `gemini-2.5-flash` 2.8 s and `gemini-3.5-flash-lite` 3.6 s, all returning valid JSON. `gemini-flash-latest` (an alias for the newest model) took **34 s** and `gemini-3.8-flash` **121 s**, which no serverless request can wait for, so the alias is deliberately not in the defaults. Checking that a model *exists* is not enough: `GET /v1beta/models/gemini-2.0-flash` kept answering 200 after the model stopped serving generation.
+3. **Failures are visible.** Each failed attempt logs `[gemini] <model> failed (HTTP <status>)`.
+4. **A failed run is `failed`, not `ready`.** When a key is configured, there is content to summarize, and the AI returned nothing, `processVideoAI` records `failed`, which the claim query already treats as reprocessable, so the next open of the video retries. (This is the state §4.2 always documented as "the Gemini call threw"; it was unreachable because errors were swallowed.)
+
+`tests/gemini.test.ts` pins this down (retirement falls through and is logged, a 400 doesn't burn the next model, every-model failure returns null, non-JSON replies are rejected).
 
 ### 8.4 `generateChapters` — the more carefully-validated one
 
@@ -1478,7 +1492,7 @@ Each covered in depth in their respective feature sections ([§10](#10-collabora
 | **@neondatabase/serverless** | An HTTP-based Postgres driver that works in serverless functions | `drizzle/db.ts`, `drizzle.config.ts` | `pg` (standard Postgres driver, needs a persistent TCP connection pool) | The standard `pg` driver doesn't cooperate well with serverless functions that spin up/down per-request; Neon's HTTP driver avoids connection-pool exhaustion |
 | **better-auth** (1.7) | Session/OAuth/cookie handling | `lib/auth.ts`, `lib/auth-client.ts`, `middleware.ts` | Hand-rolled sessions + `next-auth`/Auth.js | Rolling your own auth is a well-known security risk (cookie handling, CSRF, token expiry are all easy to get subtly wrong); better-auth is a newer, actively-maintained alternative to Auth.js with first-class Drizzle adapter support |
 | **cloudinary** (Node SDK) | Signed upload URL generation, asset deletion | `lib/cloudinary.ts` | Self-hosted file storage (e.g., raw S3) | Self-hosting video means building your own transcoding, thumbnailing, and CDN — Cloudinary's free tier includes all of that |
-| **@google/generative-ai** | Calling the Gemini API | `lib/gemini.ts` | OpenAI's API | Gemini 2.0 Flash has a genuinely free tier suitable for this app's low-volume, non-chat usage pattern |
+| **@google/generative-ai** | Calling the Gemini API | `lib/gemini.ts` | OpenAI's API | Gemini Flash has a genuinely free tier suitable for this app's low-volume, non-chat usage pattern |
 | **clsx** + **tailwind-merge** | Conditionally joining CSS class name strings, and de-duplicating conflicting Tailwind classes | `lib/utils.ts`'s `cn()` helper, used throughout components | Manual template-string concatenation | Without `tailwind-merge`, passing both a default `"p-2"` and an override `"p-4"` class would leave *both* in the DOM, and CSS's cascade order (not intent) would decide which wins; `tailwind-merge` resolves the conflict correctly by class *meaning* |
 | **dotenv** | Loading `.env.local` into `process.env` for CLI tools | `drizzle.config.ts` (drizzle-kit runs outside Next.js's own env-loading) | — | Next.js itself loads `.env.local` automatically at runtime; `drizzle-kit` is a separate CLI tool that needs its own explicit loading |
 | **vitest** | Unit test runner | `tests/*.test.ts`, `vitest.config.ts` | Jest | Vitest shares Vite's fast dev-server transform pipeline and has near drop-in Jest-compatible APIs (`describe`/`it`/`expect`), with faster cold-start times |
@@ -1632,6 +1646,7 @@ Before relying on the auth upgrade, the fields better-auth 1.7 requires (`getAut
 | **Error messages in production** | Next.js documents that it replaces Server Action error messages with a generic message in production builds, so validation errors like "Title must be at most 200 characters" likely surface on the upload form as a generic error. Not reproduced here. The fix is returning `{ error }` results instead of throwing — the `withError` seam exists for exactly that. |
 | **`timestamp without time zone` columns** | Drizzle writes and reads these as UTC, so the app is consistent. But the raw `neon()` driver serializes JS `Date`s in the host's local timezone with an offset, which Postgres silently drops for this column type — any future raw-SQL code comparing timestamps would be off by the host's UTC offset. Migrating to `timestamptz` removes the trap. |
 | **Edited-out material is still in the source file** | Edits are non-destructive: SnapCast skips cuts, but the original Cloudinary URL still holds the full recording ([§28.11](#2811-security-and-validation)). Exporting and re-uploading produces a file without it. |
+| **Gemini model retirement** | Mitigated, not eliminated. Models are retired on Google's schedule (`gemini-2.0-flash` already was; `gemini-2.5-flash-lite` is closed to new users). The chain, logging and `failed` status make a retirement visible and self-healing while a healthy model remains, but both defaults could eventually be retired. Check the Vercel logs for `[gemini]` and benchmark a replacement before adding it. |
 | **No Content-Security-Policy** | Other security headers are set (§21.3); a CSP needs nonce plumbing for Next's inline scripts, so it isn't a one-line addition. |
 
 ---
@@ -1640,7 +1655,7 @@ Before relying on the auth upgrade, the fields better-auth 1.7 requires (`getAut
 
 ### 23.1 What's actually tested
 
-Nine suites, 108 tests, all **pure functions**. The five editor suites (`edl`, `silence`, `align`, `sanitize`, `editing`; 64 tests) cover the cut-list math, undo/redo, pause detection on deterministic synthetic signals, Whisper word alignment against **real model output**, and edit-payload sanitization (see [§28](#28-the-one-take-editor)). The original three: `tests/validate.test.ts` (`requiredString`, `optionalString`, `clampInt`, `assertVisibility`), `tests/authz.test.ts` (`canViewVideo`, `hasLiveShareLink` — the access predicates from [§22.1](#221-the-layered-authorization-model)), and `tests/utils.test.ts` (`formatDuration`, `generatePagination`, `parseTranscript`, `updateURLParams`, `daysAgo`, `parseTimeToSeconds`). These are deliberately chosen because they're **deterministic and side-effect-free** — given the same input, they always produce the same output, with no database, network, or browser API involved, making them fast and trivial to assert against.
+Ten suites, 118 tests, all **pure functions**. The five editor suites (`edl`, `silence`, `align`, `sanitize`, `editing`; 64 tests) cover the cut-list math, undo/redo, pause detection on deterministic synthetic signals, Whisper word alignment against **real model output**, and edit-payload sanitization (see [§28](#28-the-one-take-editor)). The original three: `tests/validate.test.ts` (`requiredString`, `optionalString`, `clampInt`, `assertVisibility`), `tests/authz.test.ts` (`canViewVideo`, `hasLiveShareLink` — the access predicates from [§22.1](#221-the-layered-authorization-model)), and `tests/utils.test.ts` (`formatDuration`, `generatePagination`, `parseTranscript`, `updateURLParams`, `daysAgo`, `parseTimeToSeconds`). These are deliberately chosen because they're **deterministic and side-effect-free** — given the same input, they always produce the same output, with no database, network, or browser API involved, making them fast and trivial to assert against.
 
 A representative test, showing the *kind* of edge case these guard against:
 ```ts
@@ -2125,3 +2140,30 @@ Both the editor preview and `VideoPlayer` skip cuts on `requestAnimationFrame`. 
 | Switching pause level drops per-pause overrides | Levels regenerate automatic cuts | Manual cuts are kept; undo restores |
 | Export verified in Chromium only | Firefox/Safari WebCodecs support varies by version | The dialog surfaces "can't encode" errors |
 | No timeline zoom | Scope | Transcript selection gives word-level precision |
+
+
+---
+
+## 29. Accessibility and responsive baseline
+
+A UX audit of the live app found problems that a visual pass alone would miss. Each was fixed and verified in a browser with real keyboard events.
+
+| Problem found | Fix |
+|---|---|
+| The sort and visibility menus were `<div onClick>`: unreachable by keyboard | `DropdownList` follows the WAI-ARIA listbox pattern: a real `<button>` (`aria-haspopup`, `aria-expanded`), Arrow/Home/End to move, Enter/Space to choose, Esc to close and return focus, click-outside to dismiss |
+| No visible focus outside the editor, nav and player | One global `:focus-visible` ring; a "Skip to content" link as the first Tab stop, targeting `#main-content` |
+| Video cards put a `<button>` inside an `<a>` (invalid; unusable with assistive tech) | One title link stretched over the card (`.video-card-link::after`) with the copy button beside it |
+| Search had only a placeholder, and promised "folders" that don't exist | A `<label>`, `type="search"`, a clear button, and a placeholder matching what search covers (titles, transcripts, summaries) |
+| Several `<h1>`s per page (the navbar brand was one) | Brand is a `<span>`; `EmptyState` uses `<h2>`; card headings no longer skip levels |
+| Share and export dialogs had no focus handling | `useModal` (`lib/useModal.ts`): Esc closes, Tab is trapped, focus moves in and returns to the opener, page scroll is locked |
+| Video tabs were plain buttons, "Ai Summary" | `tablist`/`tab`/`tabpanel` with roving `tabindex` and arrow keys; labelled "AI summary" |
+| On a phone the video toolbar overflowed: the copy-link button measured **0 px** wide, the share button 16 px, and the visibility menu ran off-screen | The toolbar wraps; icon buttons are 40 px; the "share" button used a smiley icon and now has a real share icon |
+| The video page showed "Loading…" then silently redirected home for a private or missing video | A skeleton shaped like the page, and an explanation ("It may be private, deleted, or the link may be wrong") with a way back |
+| Collections showed a search box and sort menu that filter *videos*, not collections; other people's profiles offered Upload/Record | Both are hidden where they don't apply |
+| The sign-in button gave no feedback during the redirect to Google, and failures were silent | Pending ("Opening Google…") and error states; one `<h1>`; the action sits above the pitch on phones |
+| The player's controls ran 19 px past the screen edge at 320 px | Tighter spacing and picture-in-picture hidden below 360 px |
+| Animations ignored the OS "reduce motion" setting | A global `prefers-reduced-motion` override |
+
+**Responsive check.** Every screen was measured at 320, 375, 768, 1024 and 1280 px for horizontal overflow and off-screen elements, not just eyeballed.
+
+**Limits of this verification.** Behaviour was exercised with scripted keyboard events and real Tab/Enter key presses in a Chromium-based browser. It was not tested with a screen reader (VoiceOver, NVDA) or in Firefox/Safari.

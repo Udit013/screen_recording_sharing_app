@@ -74,7 +74,7 @@ From test recordings with known pauses, checked against ffmpeg:
 | **Screen Recording** | Browser-native MediaRecorder API — no plugins, no extensions |
 | **Webcam PiP Overlay** | Canvas API composites circular webcam over screen in real-time |
 | **Video Upload** | Direct signed upload to Cloudinary CDN |
-| **AI Summary & Tags** | Gemini 2.0 Flash generates summaries and tags from video context |
+| **AI Summary & Tags** | Gemini Flash (`gemini-3.5-flash`, falling back to `gemini-2.5-flash`) generates summaries and tags from video context |
 | **Smart Search** | Full-text search across titles, transcripts, and AI summaries |
 | **Privacy Controls** | Public / Private / Link-only visibility per video |
 | **Shareable Links** | Time-limited share tokens (7-day expiry) with revocation |
@@ -122,7 +122,7 @@ evaluated for feasibility; the decisions:
 | ORM | Drizzle ORM |
 | Auth | better-auth + Google OAuth |
 | Video Storage | Cloudinary (free tier — 25 GB) |
-| AI | Gemini 2.0 Flash via `@google/generative-ai` |
+| AI | Gemini Flash via `@google/generative-ai`, with a configurable model fallback chain |
 | Styling | Tailwind CSS v4 |
 | Deployment | Vercel (free hobby tier) |
 
@@ -144,7 +144,7 @@ Browser
 Next.js 15 Server Actions
   ├── Auth          → better-auth + Google OAuth
   ├── DB queries    → Drizzle ORM → Neon PostgreSQL
-  ├── AI pipeline   → Gemini 2.0 Flash (summary + tags)
+  ├── AI pipeline   → Gemini Flash, model chain with fallback (summary + tags)
   ├── Edit storage  → owner-only, validated words + cut list (jsonb)
   └── Share tokens  → crypto.randomUUID() + 7-day expiry
            │
@@ -159,7 +159,9 @@ Cloudinary CDN  ←→  Neon PostgreSQL  ←→  Vercel Edge
 | Practice | Implementation |
 |---|---|
 | **CI pipeline** | GitHub Actions on every push/PR: type check → unit tests → production build |
-| **Unit tests** | 108 Vitest tests: the edit model (EDL math, undo/redo, clip ranges), in-app back navigation, pause detection on synthetic signals, Whisper alignment against real model output, edit-input sanitization, input-validation guards, access-control predicates, and core utilities |
+| **Unit tests** | 118 Vitest tests: the edit model (EDL math, undo/redo, clip ranges), in-app back navigation, pause detection on synthetic signals, Whisper alignment against real model output, edit-input sanitization, input-validation guards, access-control predicates, and core utilities |
+| **Accessibility** | Skip link and one visible focus ring everywhere; keyboard-operable menus (listbox pattern) and tabs (arrow keys); labelled search; real links instead of buttons nested in links; one `<h1>` per page; modal dialogs trap focus, close on Esc and return focus; `prefers-reduced-motion` honoured |
+| **Responsive** | Checked at 320, 375, 768, 1024 and 1280 px with no horizontal overflow; action toolbars wrap instead of squeezing controls to zero width |
 | **Strict builds** | Type and lint errors fail the build (no `ignoreBuildErrors`) |
 | **Input validation** | Every server action validates/clamps client input at the network boundary (`lib/validate.ts`) |
 | **Authorization** | Ownership checks on all mutations; signed-URL issuance blocked for other users' assets; the editor route and its actions return the same "not found" for missing and not-yours videos |
@@ -237,6 +239,7 @@ npm run dev
 | `GOOGLE_CLIENT_ID/SECRET` | Google Cloud Console |
 | `CLOUDINARY_*` | [cloudinary.com](https://cloudinary.com) — free |
 | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) — free |
+| `GEMINI_MODEL` | *Optional.* Comma-separated models, tried in order. Default `gemini-3.5-flash,gemini-2.5-flash` |
 
 See [`.env.example`](.env.example) for the full list. The editor needs **no** extra environment variables, API keys or services.
 
@@ -250,10 +253,19 @@ If your database predates the editor, `npx drizzle-kit push` adds the two nullab
 |---|---|
 | Neon PostgreSQL | 0.5 GB storage, 190 compute hours/month |
 | Cloudinary | 25 GB storage + bandwidth/month |
-| Gemini 2.0 Flash | 15 RPM, 1M tokens/day |
+| Gemini Flash (AI Studio key) | Free tier; no billing account attached |
 | Vercel | Unlimited hobby deployments |
 | Google OAuth | Free |
 | Whisper model + WASM runtime | Free public CDNs (Hugging Face Hub, jsDelivr); cached by each browser |
 | Transcription, analysis, export | Run on the user's device: $0 per minute processed |
 
 **Total monthly cost: $0**
+
+---
+
+## Operations notes
+
+- **AI summaries are produced by a model Google can retire.** `gemini-2.0-flash` was shut down while this app still called it; every summary failed *silently* and videos were stored as "ready" with nothing in them. The client now falls through a model chain on retirement (404), quota (429) or outage (503), logs each failure as `[gemini] <model> failed (HTTP …)` in the Vercel logs, and marks a run `failed` (retried the next time the video is opened) when the AI returned nothing. If summaries stop appearing, look for `[gemini]` in the logs and set `GEMINI_MODEL`.
+- **Check a model before choosing it.** `GET /v1beta/models/<name>` still answered for the retired model; only a real `generateContent` call returned 404. Latency matters too: with this app's prompt, `gemini-3.5-flash` and `gemini-2.5-flash` take ~3 s, while `gemini-flash-latest` took 34 s and `gemini-3.8-flash` 121 s, so the "always newest" alias is not a safe default.
+- **Build warnings.** `next build` prints `A Node.js API is used … not supported in the Edge Runtime` for `better-auth` and `jose`. They come from importing the auth library in the middleware, are static-analysis notices for code paths that never run there, and are not errors.
+- **Audit exceptions.** `npm audit` still reports Next's bundled `postcss` (build-time, processes only first-party CSS) and `esbuild` inside `drizzle-kit` (a dev CLI; npm's suggested fix is a breaking downgrade). Neither is reachable from production traffic.
