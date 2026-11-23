@@ -169,7 +169,7 @@ export function captionsFromWords(
         w.start - prev.end > maxGap ||
         group.length >= maxWords ||
         w.end - group[0].start > maxSeconds ||
-        /[.!?]["')\]]?$/.test(prev.text)
+        /[.!?।॥]["')\]]?$/.test(prev.text)
       ) {
         flush();
       }

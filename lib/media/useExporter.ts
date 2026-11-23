@@ -19,6 +19,7 @@ export interface ExportOptions {
   output?: ExportOutput;
   captions?: ExportRequest["captions"];
   look?: ExportRequest["look"];
+  mix?: ExportRequest["mix"];
 }
 
 /** Renders an edit in a worker. Object URLs are revoked on reset/unmount. */
@@ -82,6 +83,7 @@ export function useExporter() {
       output: options.output ?? "mp4",
       captions: options.captions ?? null,
       look: options.look ?? null,
+      mix: options.mix ?? null,
     };
     worker.postMessage(req);
   }, []);

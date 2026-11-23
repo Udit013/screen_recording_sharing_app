@@ -5,14 +5,17 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { saveEdit, saveWordTranscript, type EditorData } from "@/lib/actions/edit";
 import { useAudioAnalysis, type AnalysisState } from "@/lib/media/useAudioAnalysis";
 import { useTranscriber } from "@/lib/media/useTranscriber";
+import { LANGUAGE_OPTIONS, modelFor, type TranscriptLanguage } from "@/lib/media/language";
 import { docHistoryReducer, initialDocHistory } from "@/lib/studio/doc";
 import { fadeGainAt, untouchedFx, type AudioFx } from "@/lib/studio/fx";
 import { usePreviewFx } from "@/lib/studio/usePreviewFx";
 import { emptyCaptionTrack, toEditedCaptions, type CaptionTrack } from "@/lib/studio/captions";
 import { useStageRenderer } from "@/lib/studio/useStageRenderer";
 import { defaultLook, isIdentityLook, sanitizeLook, type VideoLook } from "@/lib/studio/frame";
+import { dbToGain, emptyMix, isPlainMix, shiftMix, type AudioMix } from "@/lib/studio/tracks";
+import { useMixPreview } from "@/lib/studio/useMixPreview";
 import {
-  clipSegments, keptSegments, mergeRanges, nextPlayableTime, isInsideCut, roundMs, sourceToEdited, subtractRange, summarizeEdit,
+  clipSegments, editedToSource, keptSegments, mergeRanges, nextPlayableTime, isInsideCut, roundMs, sourceToEdited, subtractRange, summarizeEdit,
   type Cut, type Range,
 } from "@/lib/media/edl";
 import { PAUSE_LEVELS, pauseCuts, type PauseLevel } from "@/lib/media/pauses";
@@ -23,6 +26,7 @@ import TranscriptPane, { type PauseMarker } from "./TranscriptPane";
 import ExportDialog from "./ExportDialog";
 import CaptionStudio from "./CaptionStudio";
 import VideoStudio from "./VideoStudio";
+import TracksStudio from "./TracksStudio";
 import AudioStudio from "./AudioStudio";
 
 type Ready = Extract<AnalysisState, { status: "ready" }>;
@@ -48,12 +52,13 @@ function saveErrorMessage(err: unknown): string {
   return msg.length > 120 ? `${msg.slice(0, 117)}…` : msg;
 }
 
-type SideTab = "transcript" | "captions" | "video" | "audio";
+type SideTab = "transcript" | "captions" | "video" | "audio" | "tracks";
 const SIDE_TABS: { id: SideTab; label: string }[] = [
   { id: "transcript", label: "Transcript" },
   { id: "captions", label: "Captions" },
   { id: "video", label: "Video" },
   { id: "audio", label: "Audio" },
+  { id: "tracks", label: "Tracks" },
 ];
 const identityLook = defaultLook();
 const secs = (t: number) => (t >= 60 ? clock(t) : `${t.toFixed(1)}s`);
@@ -151,16 +156,18 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   // One undoable document: the cut list and the Audio Studio settings.
   const initialFx = useMemo(() => data.audioFx ?? untouchedFx(), [data.audioFx]);
   const initialCaptions = useMemo(() => data.captions ?? emptyCaptionTrack(), [data.captions]);
+  const initialMix = useMemo(() => data.mix ?? emptyMix(), [data.mix]);
   const initialLook = useMemo(() => (data.look ? sanitizeLook(data.look) : defaultLook()), [data.look]);
   const [history, dispatch] = useReducer(
     docHistoryReducer,
-    { cuts: data.cuts, fx: initialFx, captions: initialCaptions, look: initialLook },
+    { cuts: data.cuts, fx: initialFx, captions: initialCaptions, look: initialLook, mix: initialMix },
     initialDocHistory
   );
   const cuts = history.present.cuts;
   const fx = history.present.fx;
   const captions = history.present.captions;
   const look = history.present.look;
+  const mix = history.present.mix;
   const presentRef = useRef(history.present);
   useEffect(() => { presentRef.current = history.present; });
   const merged = useMemo(() => mergeRanges(cuts, duration), [cuts, duration]);
@@ -187,6 +194,16 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
         type: "commit",
         value: { ...presentRef.current, captions: next },
         mergeKey: mergeKey ? `cap:${mergeKey}` : undefined,
+        at: performance.now(),
+      }),
+    []
+  );
+  const setMix = useCallback(
+    (next: AudioMix, mergeKey?: string) =>
+      dispatch({
+        type: "commit",
+        value: { ...presentRef.current, mix: next },
+        mergeKey: mergeKey ? `mix:${mergeKey}` : undefined,
         at: performance.now(),
       }),
     []
@@ -224,6 +241,20 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   // ── Transcript ──────────────────────────────────────────────────────────
   const [words, setWords] = useState<Word[] | null>(data.words);
   const [wordsNote, setWordsNote] = useState<string | null>(null);
+  // Transcription language, remembered per video in this browser.
+  const langKey = `snapcast:transcript-lang:${data.videoId}`;
+  const [lang, setLangState] = useState<TranscriptLanguage>("en");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(langKey) as TranscriptLanguage | null;
+      if (v && LANGUAGE_OPTIONS.some((o) => o.id === v)) setLangState(v);
+    } catch { /* storage unavailable: keep the default */ }
+  }, [langKey]);
+  const setLang = (v: TranscriptLanguage) => {
+    setLangState(v);
+    try { localStorage.setItem(langKey, v); } catch { /* ignore */ }
+  };
+  const transcribe = () => transcriber.start(audio, silences, lang);
   const transcriber = useTranscriber();
   const tState = transcriber.state;
   const shownWords = useMemo<Word[]>(
@@ -240,11 +271,17 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     const refined = refineWords(tState.words, silences);
     setWords(refined);
     const speed = tState.audioSeconds / (tState.inferenceMs / 1000);
-    setWordsNote(`Transcribed ${refined.length} words at ${speed.toFixed(1)}× real time. Saving…`);
+    const names: Record<string, string> = { en: "English", hi: "Hindi", sa: "Sanskrit" };
+    const total = Object.values(tState.languages).reduce((a, b) => a + (b ?? 0), 0) || 1;
+    const detected = tState.language === "auto" || tState.language === "hinglish"
+      ? ` Detected: ${Object.entries(tState.languages).sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+          .map(([l, sec]) => `${names[l] ?? l} ${Math.round(((sec ?? 0) / total) * 100)}%`).join(", ")}.`
+      : "";
+    setWordsNote(`Transcribed ${refined.length} words at ${speed.toFixed(1)}× real time.${detected} Saving…`);
     saveWordTranscript(data.videoId, refined)
       .then((r) =>
         setWordsNote(
-          `Transcribed ${r.wordCount} words at ${speed.toFixed(1)}× real time. Search, the transcript tab and AI chapters now use it.`
+          `Transcribed ${r.wordCount} words at ${speed.toFixed(1)}× real time.${detected} Search, the transcript tab and AI chapters now use it.`
         )
       )
       .catch((err) => setWordsNote(`Transcript ready here but not saved: ${err instanceof Error ? err.message : "unknown error"}`));
@@ -279,6 +316,18 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   // ── Audio preview (effects run live in an AudioWorklet) ────────────────
   const [bypass, setBypass] = useState(false);
   const preview = usePreviewFx(videoRef, fx, bypass);
+
+  // Multitrack preview: added clips play on the edited timeline; the
+  // recording's own level/mute applies in "Edited" mode only.
+  const modeRefForMix = useRef<"edited" | "original">("edited");
+  const editedNow = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || modeRefForMix.current !== "edited") return null;
+    return sourceToEdited(v.currentTime, mergedRefForMix.current);
+  }, []);
+  const mergedRefForMix = useRef(merged);
+  useEffect(() => { mergedRefForMix.current = merged; }, [merged]);
+  const mixPreview = useMixPreview(videoRef, preview.getBus, preview.ctxReady, mix, editedNow);
   const fxRef = useRef(fx);
   useEffect(() => { fxRef.current = fx; }, [fx]);
 
@@ -286,6 +335,14 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [mode, setMode] = useState<"edited" | "original">("edited");
+  const { setOriginalGain } = preview;
+  const { reschedule: rescheduleMix } = mixPreview;
+  const origLevel = mode === "edited" ? (mix.original.muted ? 0 : dbToGain(mix.original.gainDb)) : 1;
+  useEffect(() => { setOriginalGain(origLevel); }, [origLevel, setOriginalGain, preview.ctxReady]);
+  useEffect(() => {
+    modeRefForMix.current = mode;
+    rescheduleMix();
+  }, [mode, rescheduleMix]);
 
   // The stage: framing and captions, drawn by the same renderers as the
   // export. In "Original" mode captions are shown at their source times.
@@ -441,13 +498,13 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const [save, setSave] = useState<{ status: "saved" | "saving" | "error"; message?: string }>({ status: "saved" });
   const [retryTick, setRetryTick] = useState(0);
   const saveLevel = level === "off" || level === "custom" ? null : level;
-  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel, initialFx, initialCaptions, initialLook]));
+  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel, initialFx, initialCaptions, initialLook, initialMix]));
   const seqRef = useRef(0);
   const inFlightRef = useRef(0);
 
   // The edit waiting for the debounce. Kept in a ref so leaving the editor
   // through an in-app link (which beforeunload never sees) can still send it.
-  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null; fx: AudioFx; captions: CaptionTrack; look: VideoLook } | null>(null);
+  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null; fx: AudioFx; captions: CaptionTrack; look: VideoLook; mix: AudioMix } | null>(null);
 
   const sendPending = useCallback(() => {
     const p = pendingRef.current;
@@ -456,7 +513,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     sentKeyRef.current = p.key;
     const seq = ++seqRef.current;
     inFlightRef.current++;
-    saveEdit(data.videoId, p.cuts, p.level, p.fx, p.captions, p.look)
+    saveEdit(data.videoId, p.cuts, p.level, p.fx, p.captions, p.look, p.mix)
       .then(() => { if (seq === seqRef.current) setSave({ status: "saved" }); })
       .catch((err) => {
         if (seq !== seqRef.current) return;
@@ -467,7 +524,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   }, [data.videoId]);
 
   useEffect(() => {
-    const key = JSON.stringify([cuts, saveLevel, fx, captions, look]);
+    const key = JSON.stringify([cuts, saveLevel, fx, captions, look, mix]);
     if (key === sentKeyRef.current) {
       // e.g. an edit undone before it was sent: nothing new to store.
       pendingRef.current = null;
@@ -475,10 +532,10 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
       return;
     }
     setSave({ status: "saving" });
-    pendingRef.current = { key, cuts, level: saveLevel, fx, captions, look };
+    pendingRef.current = { key, cuts, level: saveLevel, fx, captions, look, mix };
     const timer = setTimeout(sendPending, 700);
     return () => clearTimeout(timer);
-  }, [cuts, saveLevel, fx, captions, look, retryTick, sendPending]);
+  }, [cuts, saveLevel, fx, captions, look, mix, retryTick, sendPending]);
 
   // Unmount (navigating away inside the app): send what the debounce held.
   useEffect(() => () => sendPending(), [sendPending]);
@@ -492,11 +549,11 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
 
   // ── Export ──────────────────────────────────────────────────────────────
   // null = closed; otherwise the segments to render and what they are.
-  const [exportJob, setExportJob] = useState<{ segments: Range[]; selection: boolean } | null>(null);
+  const [exportJob, setExportJob] = useState<{ segments: Range[]; selection: boolean; intent?: "extract" } | null>(null);
   const exportOpen = exportJob !== null;
-  const openExport = useCallback((segments: Range[], selection: boolean) => {
+  const openExport = useCallback((segments: Range[], selection: boolean, intent?: "extract") => {
     videoRef.current?.pause();
-    setExportJob({ segments, selection });
+    setExportJob({ segments, selection, intent });
   }, []);
 
   // ── Clips ───────────────────────────────────────────────────────────────
@@ -713,6 +770,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
               >
                 {t.label}
                 {t.id === "audio" && fx.enabled && !bypass && <span className="ed-tab-dot" aria-label="(effects on)" />}
+                {t.id === "tracks" && !isPlainMix(mix) && <span className="ed-tab-dot" aria-label="(tracks added)" />}
                 {t.id === "video" && !isIdentityLook(look) && <span className="ed-tab-dot" aria-label="(reframed)" />}
                 {t.id === "captions" && captions.burnIn && captions.captions.length > 0 && <span className="ed-tab-dot" aria-label="(captions on)" />}
               </button>
@@ -765,7 +823,10 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
                 </p>
               )}
               {words && !transcribing && (
-                <button className="ed-link" onClick={() => transcriber.start(audio, silences)}>Re-transcribe</button>
+                <span className="ed-retranscribe">
+                  <LanguageSelect value={lang} onChange={setLang} compact />
+                  <button className="ed-link" onClick={transcribe}>Re-transcribe</button>
+                </span>
               )}
             </div>
 
@@ -788,7 +849,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
             {tState.phase === "error" && (
               <div className="ed-callout is-error" role="alert">
                 <p>Transcription failed: {tState.message}</p>
-                <button className="ed-btn is-small" onClick={() => transcriber.start(audio, silences)}>Try again</button>
+                <button className="ed-btn is-small" onClick={transcribe}>Try again</button>
               </div>
             )}
             {wordsNote && tState.phase === "done" && <p className="ed-callout">{wordsNote}</p>}
@@ -813,13 +874,39 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
                     Get a word-level transcript, then cut a sentence by deleting it. Speech recognition (Whisper) runs
                     entirely in your browser: your audio never leaves this device and it costs nothing.
                   </p>
-                  <button className="ed-btn is-primary" onClick={() => transcriber.start(audio, silences)}>
+                  <LanguageSelect value={lang} onChange={setLang} />
+                  <button className="ed-btn is-primary" onClick={transcribe}>
                     Transcribe {clock(duration)} of audio
                   </button>
-                  <p className="ed-fine">One-time model download, then cached by your browser.</p>
+                  <p className="ed-fine">
+                    {LANGUAGE_OPTIONS.find((o) => o.id === lang)?.hint}{" "}
+                    One-time model download (~{modelFor(lang).approxMB} MB), then cached by your browser.
+                    {lang !== "en" && " The multilingual model is slower: roughly real time or a little faster on a laptop."}
+                  </p>
+                  {lang === "sa" && (
+                    <p className="ed-fine">
+                      Whisper has very little Sanskrit training data and can&apos;t detect it. Sanskrit is written in
+                      Devanagari phonetically; expect spelling errors (sandhi, visarga), and correct captions by hand.
+                    </p>
+                  )}
                 </div>
               )
             )}
+          </div>
+          ) : sideTab === "tracks" ? (
+          <div className="ed-tabpanel is-scroll" role="tabpanel" id="ed-panel-tracks" aria-labelledby="ed-tab-tracks">
+            <TracksStudio
+              videoId={data.videoId}
+              mix={mix}
+              onChange={setMix}
+              editedDuration={summary.editedDuration}
+              playhead={sourceToEdited(currentTime, merged)}
+              onSeek={(t) => seek(editedToSource(t, kept))}
+              loads={mixPreview.loads}
+              getBuffer={mixPreview.getBuffer}
+              onExtractOriginal={() => openExport(kept, false, "extract")}
+              hasOriginalAudio={audio.samples.length > 0}
+            />
           </div>
           ) : sideTab === "video" ? (
           <div className="ed-tabpanel is-scroll" role="tabpanel" id="ed-panel-video" aria-labelledby="ed-tab-video">
@@ -882,6 +969,8 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
           editedSeconds={exportJob.segments.reduce((s, r) => s + (r.end - r.start), 0)}
           audioFx={fx}
           look={look}
+          intent={exportJob.intent}
+          mix={isPlainMix(mix) ? null : shiftMix(mix, exportJob.segments.length ? sourceToEdited(exportJob.segments[0].start, merged) : 0)}
           captions={captions.burnIn && captions.captions.length > 0 ? { captions: captions.captions, style: captions.style } : null}
           onClose={() => setExportJob(null)}
         />
@@ -930,5 +1019,16 @@ function Progress({
       </div>
       {detail && <p className="ed-fine">{detail}</p>}
     </div>
+  );
+}
+
+function LanguageSelect({ value, onChange, compact = false }: { value: TranscriptLanguage; onChange: (v: TranscriptLanguage) => void; compact?: boolean }) {
+  return (
+    <label className={compact ? "ed-lang is-compact" : "ed-lang"}>
+      <span className={compact ? "sr-only" : undefined}>Spoken language</span>
+      <select value={value} onChange={(e) => onChange(e.target.value as TranscriptLanguage)}>
+        {LANGUAGE_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+      </select>
+    </label>
   );
 }

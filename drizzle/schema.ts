@@ -14,6 +14,7 @@ import type { PauseLevel } from "@/lib/media/pauses";
 import type { AudioFx } from "@/lib/studio/fx";
 import type { CaptionTrack } from "@/lib/studio/captions";
 import type { VideoLook } from "@/lib/studio/frame";
+import type { AudioMix } from "@/lib/studio/tracks";
 
 export interface StoredEdl {
   version: 1;
@@ -32,6 +33,12 @@ export interface StoredEdl {
   captions?: CaptionTrack | null;
   /** Framing and colour (aspect, fit, crop, adjustments). Optional likewise. */
   look?: VideoLook | null;
+  /**
+   * Multitrack audio: original-audio level/mute plus added tracks of clips.
+   * Clips reference uploaded files by URL (this video's Cloudinary audio
+   * folder); no audio data is stored in the database.
+   */
+  mix?: AudioMix | null;
 }
 
 export const user = pgTable("user", {

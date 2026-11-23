@@ -9,9 +9,9 @@ import type { Range as FxRange } from "@/lib/studio/fx";
 type Range = Pick<FxRange, "min" | "max" | "step">;
 
 export function Section({
-  title, summary, enabled, onToggle, children,
-}: { title: string; summary: string; enabled?: boolean; onToggle?: (v: boolean) => void; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+  title, summary, enabled, onToggle, children, defaultOpen = false,
+}: { title: string; summary: string; enabled?: boolean; onToggle?: (v: boolean) => void; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   return (
     <section className={open ? "as-sec is-open" : "as-sec"}>

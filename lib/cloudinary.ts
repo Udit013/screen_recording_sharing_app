@@ -43,3 +43,9 @@ export async function deleteCloudinaryResource(
   configure();
   await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
 }
+
+/** Deletes every asset under a folder prefix (e.g. a video's added audio). */
+export async function deleteCloudinaryPrefix(prefix: string, resourceType: "video" | "image") {
+  configure();
+  await cloudinary.api.delete_resources_by_prefix(prefix, { resource_type: resourceType });
+}

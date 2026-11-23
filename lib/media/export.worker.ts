@@ -39,6 +39,7 @@ import { WavWriter } from "@/lib/studio/wav";
 import { captionAt, captionsForSegments, sanitizeCaptionStyle, type Caption, type CaptionStyle } from "@/lib/studio/captions";
 import { drawCaption, loadCaptionFont } from "@/lib/studio/captionRender";
 import { drawFrame, isIdentityLook, outputSize, sanitizeLook, type VideoLook } from "@/lib/studio/frame";
+import { dbToGain, isPlainMix, mixInto, type AudioMix, type DecodedClip } from "@/lib/studio/tracks";
 import {
   EXPORT_PRESETS,
   type ExportEvent,
@@ -117,15 +118,16 @@ async function renderProcessedAudio(
   fx: AudioFx | null,
   editedSeconds: number,
   gain: number,
-  emit: (chunk: AudioChunk) => Promise<void>
+  emit: (chunk: AudioChunk) => Promise<void>,
+  applyFades = true
 ) {
   const sampleRate = await track.getSampleRate();
   const engine = createAudioEngine(sampleRate);
   // No effects: the engine bypasses, so this path just copies the audio.
   engine.configure(fx ?? { ...defaultFx(), enabled: false });
   const latency = engine.latency();
-  const fadeIn = fx?.enabled ? fx.fadeInMs : 0;
-  const fadeOut = fx?.enabled ? fx.fadeOutMs : 0;
+  const fadeIn = applyFades && fx?.enabled ? fx.fadeInMs : 0;
+  const fadeOut = applyFades && fx?.enabled ? fx.fadeOutMs : 0;
   let skip = latency;
   let lastEnd = 0;
 
@@ -162,11 +164,109 @@ async function renderProcessedAudio(
   }
 }
 
-/** Peak of the processed audio, for two-pass normalization. */
-async function measurePeak(track: InputAudioTrack, segments: Range[], fx: AudioFx, editedSeconds: number) {
+/**
+ * Decodes the part of each added clip that can play inside the export, at the
+ * asset's own sample rate (the mixer interpolates). Clips that start after
+ * the end of the export are skipped; one that can't be decoded fails the
+ * export with its name, rather than silently dropping a track.
+ */
+async function decodeClips(mix: AudioMix, editedSeconds: number, onProgress: (done: number, total: number) => void) {
+  const decoded = new Map<string, DecodedClip>();
+  const clips = mix.tracks.filter((t) => !t.muted).flatMap((t) => t.clips).filter((c) => c.start < editedSeconds);
+  let done = 0;
+  for (const c of clips) {
+    const input = new Input({ formats: ALL_FORMATS, source: new UrlSource(c.url, { getRetryDelay: retryDelay }) });
+    try {
+      const track = await input.getPrimaryAudioTrack();
+      if (!track || !(await track.canDecode())) throw new Error("unsupported audio");
+      const sr = await track.getSampleRate();
+      const from = c.in;
+      const to = Math.min(c.out, c.in + (editedSeconds - c.start)) + 0.05;
+      const frames = Math.ceil((to - from) * sr) + 2;
+      const left = new Float32Array(frames), right = new Float32Array(frames);
+      const sink = new AudioSampleSink(track);
+      for await (const sample of sink.samples(Math.max(0, from - 0.05), to)) {
+        const [l, r] = stereoPlanes(sample);
+        const off = Math.round((sample.timestamp - from) * sr);
+        sample.close();
+        for (let i = 0; i < l.length; i++) {
+          const k = off + i;
+          if (k >= 0 && k < frames) { left[k] = l[i]; right[k] = r[i]; }
+        }
+      }
+      decoded.set(c.id, { left, right, from, sampleRate: sr });
+    } catch (err) {
+      throw new Error(`Couldn't decode the added audio "${c.name}" (${err instanceof Error ? err.message : "error"}).`);
+    } finally {
+      input.dispose();
+    }
+    onProgress(++done, clips.length);
+  }
+  return decoded;
+}
+
+/**
+ * The final audio: the original (through the effects chain, at its level,
+ * or silence when muted/absent) plus every added clip, then the master fades
+ * and normalization gain over the whole mix. Emits contiguous stereo chunks
+ * covering exactly [0, editedSeconds).
+ */
+async function renderFinalAudio(
+  track: InputAudioTrack | null,
+  segments: Range[],
+  fx: AudioFx | null,
+  editedSeconds: number,
+  mix: AudioMix,
+  decoded: Map<string, DecodedClip>,
+  gain: number,
+  emit: (chunk: AudioChunk) => Promise<void>
+) {
+  const fadeIn = fx?.enabled ? fx.fadeInMs : 0;
+  const fadeOut = fx?.enabled ? fx.fadeOutMs : 0;
+  const origGain = mix.original.muted ? 0 : dbToGain(mix.original.gainDb);
+  const sampleRate = track ? await track.getSampleRate() : 48000;
+  const total = Math.round(editedSeconds * sampleRate);
+  let written = 0;
+
+  const finish = async (left: Float32Array, right: Float32Array, frames: number) => {
+    const t0 = written / sampleRate;
+    mixInto(mix, decoded, left, right, frames, t0, sampleRate);
+    for (let i = 0; i < frames; i++) {
+      const g = gain * fadeGainAt((written + i) / sampleRate, editedSeconds, fadeIn, fadeOut);
+      left[i] *= g;
+      right[i] *= g;
+    }
+    await emit({ left, right, frames, timestamp: t0, sampleRate });
+    written += frames;
+  };
+
+  if (track) {
+    await renderProcessedAudio(track, segments, fx, editedSeconds, 1, async (c) => {
+      // Place each chunk at its frame position; pad any gap with silence.
+      const at = Math.round(c.timestamp * sampleRate);
+      while (written < Math.min(at, total)) {
+        const n = Math.min(4096, Math.min(at, total) - written);
+        await finish(new Float32Array(n), new Float32Array(n), n);
+      }
+      const skip = Math.max(0, written - at);
+      const n = Math.min(c.frames - skip, total - written);
+      if (n <= 0) return;
+      const left = c.left.slice(skip, skip + n), right = c.right.slice(skip, skip + n);
+      if (origGain !== 1) for (let i = 0; i < n; i++) { left[i] *= origGain; right[i] *= origGain; }
+      await finish(left, right, n);
+    }, false);
+  }
+  while (written < total) {
+    const n = Math.min(4096, total - written);
+    await finish(new Float32Array(n), new Float32Array(n), n);
+  }
+}
+
+/** Peak of everything a render emits, for two-pass normalization. */
+async function peakOf(render: (emit: (c: AudioChunk) => Promise<void>) => Promise<void>) {
   let peak = 0;
-  await renderProcessedAudio(track, segments, fx, editedSeconds, 1, async ({ left, right }) => {
-    for (let i = 0; i < left.length; i++) {
+  await render(async ({ left, right, frames }) => {
+    for (let i = 0; i < frames; i++) {
       const a = Math.abs(left[i]), b = Math.abs(right[i]);
       if (a > peak) peak = a;
       if (b > peak) peak = b;
@@ -174,6 +274,8 @@ async function measurePeak(track: InputAudioTrack, segments: Range[], fx: AudioF
   });
   return peak;
 }
+
+const countClips = (m: AudioMix) => m.tracks.filter((t) => !t.muted).reduce((n, t) => n + t.clips.length, 0);
 
 /**
  * AAC encoders prepend "priming" samples (measured here: 2112 frames, 44 ms
@@ -253,6 +355,8 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
   const { url, segments, preset } = msg.data;
   const outputKind: "mp4" | "wav" = msg.data.output ?? "mp4";
   const fx = msg.data.audioFx && isFxActive(msg.data.audioFx) ? msg.data.audioFx : null;
+  // Multitrack: anything beyond "the original audio, untouched" goes through the mixer.
+  const mix: AudioMix | null = msg.data.mix && !isPlainMix(msg.data.mix) ? msg.data.mix : null;
   const t0 = performance.now();
   try {
     if (segments.length === 0) throw new Error("Nothing to export — every part of the video is cut.");
@@ -261,16 +365,21 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     const editedSecondsAll = segments.reduce((s, r) => s + (r.end - r.start), 0);
 
     if (outputKind === "wav") {
-      const aTrack = await input.getPrimaryAudioTrack();
-      if (!aTrack) throw new Error("This video has no audio track to export.");
-      if (!(await aTrack.canDecode())) throw new Error("This browser can't decode the source audio codec.");
-      post({ type: "start", output: outputKind, width: 0, height: 0, videoCodec: null, audioCodec: "pcm-s16", editedSeconds: editedSecondsAll, audioProcessed: !!fx, captionsBurned: 0 });
+      const srcAudio = await input.getPrimaryAudioTrack();
+      if (srcAudio && !(await srcAudio.canDecode())) throw new Error("This browser can't decode the source audio codec.");
+      if (!srcAudio && !mix) throw new Error("This video has no audio track to export.");
+      const aTrack = srcAudio;
+      post({ type: "start", output: outputKind, width: 0, height: 0, videoCodec: null, audioCodec: "pcm-s16", editedSeconds: editedSecondsAll, audioProcessed: !!fx, captionsBurned: 0, tracksMixed: mix ? countClips(mix) : 0 });
+      const decoded = mix ? await decodeClips(mix, editedSecondsAll, () => {}) : null;
+      const render = (g: number, emit: (c: AudioChunk) => Promise<void>) =>
+        mix ? renderFinalAudio(aTrack, segments, fx, editedSecondsAll, mix, decoded!, g, emit)
+          : renderProcessedAudio(aTrack!, segments, fx, editedSecondsAll, g, emit);
       const gain = fx?.normalize.enabled
-        ? normalizeGain(await measurePeak(aTrack, segments, fx, editedSecondsAll), fx.normalize.targetDb)
+        ? normalizeGain(await peakOf((emit) => render(1, emit)), fx.normalize.targetDb)
         : 1;
       let wav: WavWriter | null = null;
       let lastReport = 0;
-      await renderProcessedAudio(aTrack, segments, fx, editedSecondsAll, gain, async (c) => {
+      await render(gain, async (c) => {
         wav ??= new WavWriter(c.sampleRate, 2);
         wav.push(c.left, c.right, c.frames);
         const now = performance.now();
@@ -308,11 +417,12 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     const videoCodec = await getFirstEncodableVideoCodec(["avc", "vp9", "av1"], { width, height });
     if (!videoCodec) throw new Error("This browser can't encode video (WebCodecs unavailable).");
     // Processed audio is always stereo (see dsp.ts), so encode two channels.
-    const processAudio = audioUsable && !!fx;
-    const audioCodec = audioUsable
+    const processAudio = (audioUsable && !!fx) || !!mix;
+    const hasAudio = audioUsable || !!mix;
+    const audioCodec = hasAudio
       ? await getFirstEncodableAudioCodec(["aac", "opus"], {
           numberOfChannels: processAudio ? 2 : await aTrack!.getNumberOfChannels(),
-          sampleRate: await aTrack!.getSampleRate(),
+          sampleRate: audioUsable ? await aTrack!.getSampleRate() : 48000,
         })
       : null;
 
@@ -353,7 +463,7 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     await output.start();
 
     const editedSeconds = segments.reduce((s, r) => s + (r.end - r.start), 0);
-    post({ type: "start", output: outputKind, width, height, videoCodec, audioCodec, editedSeconds, audioProcessed: processAudio && !!audioCodec, captionsBurned: captionsToBurn?.captions.length ?? 0 });
+    post({ type: "start", output: outputKind, width, height, videoCodec, audioCodec, editedSeconds, audioProcessed: !!fx && audioUsable && !!audioCodec, captionsBurned: captionsToBurn?.captions.length ?? 0, tracksMixed: mix && audioCodec ? countClips(mix) : 0 });
 
     // Progress is driven by the video track (the expensive one).
     let videoDone = 0;
@@ -422,16 +532,23 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
       videoSource.close();
     };
 
+    // Added clips are fetched and decoded before encoding starts.
+    const decoded = mix && audioCodec ? await decodeClips(mix, editedSeconds, () => {}) : null;
+
     const encodeAudio = async () => {
-      if (!audioSource || !aTrack) return;
-      const encSampleRate = await aTrack.getSampleRate();
-      const encChannels = processAudio ? 2 : await aTrack.getNumberOfChannels();
+      if (!audioSource) return;
+      const srcAudio = audioUsable ? aTrack! : null;
+      const encSampleRate = srcAudio ? await srcAudio.getSampleRate() : 48000;
+      const encChannels = processAudio ? 2 : await srcAudio!.getNumberOfChannels();
       const shift = audioCodec === "aac" ? (await measureAacDelay(encSampleRate, encChannels)) / encSampleRate : 0;
-      if (processAudio && fx) {
-        const gain = fx.normalize.enabled
-          ? normalizeGain(await measurePeak(aTrack, segments, fx, editedSeconds), fx.normalize.targetDb)
+      if (processAudio) {
+        const render = (g: number, emit: (c: AudioChunk) => Promise<void>) =>
+          mix ? renderFinalAudio(srcAudio, segments, fx, editedSeconds, mix, decoded!, g, emit)
+            : renderProcessedAudio(srcAudio!, segments, fx, editedSeconds, g, emit);
+        const gain = fx?.normalize.enabled
+          ? normalizeGain(await peakOf((emit) => render(1, emit)), fx.normalize.targetDb)
           : 1;
-        await renderProcessedAudio(aTrack, segments, fx, editedSeconds, gain, async (c) => {
+        await render(gain, async (c) => {
           const data = new Float32Array(c.frames * 2);
           data.set(c.left.subarray(0, c.frames), 0);
           data.set(c.right.subarray(0, c.frames), c.frames);
@@ -447,7 +564,7 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
         });
       } else {
         // No effects: the original samples, sample-accurately trimmed.
-        for await (const { sample, editedTs } of editedAudio(aTrack, segments)) {
+        for await (const { sample, editedTs } of editedAudio(aTrack!, segments)) {
           sample.setTimestamp(editedTs - shift);
           await audioSource.add(sample);
           sample.close();

@@ -6,6 +6,7 @@ import { EXPORT_PRESETS, type ExportOutput, type ExportPreset } from "@/lib/medi
 import { isFxActive, type AudioFx } from "@/lib/studio/fx";
 import { captionsForSegments, type Caption, type CaptionStyle } from "@/lib/studio/captions";
 import { isIdentityLook, type VideoLook } from "@/lib/studio/frame";
+import type { AudioMix } from "@/lib/studio/tracks";
 import type { Range } from "@/lib/media/edl";
 import { formatDuration } from "@/lib/utils";
 import { useModal } from "@/lib/useModal";
@@ -23,6 +24,10 @@ interface ExportDialogProps {
   captions?: { captions: Caption[]; style: CaptionStyle } | null;
   /** The Video tab's framing; rendered into MP4 exports. */
   look?: VideoLook | null;
+  /** Multitrack audio (already shifted for clip exports); null when it's just the original. */
+  mix?: AudioMix | null;
+  /** "extract": start as a plain WAV of the original audio (no effects, no added tracks). */
+  intent?: "extract";
   onClose: () => void;
 }
 
@@ -31,12 +36,15 @@ const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV
 const codecName = (c: string | null) => (c ? CODEC_NAMES[c] ?? c : "");
 
 export default function ExportDialog({
-  videoUrl, title, segments, editedSeconds, selection = false, audioFx = null, captions = null, look = null, onClose,
+  videoUrl, title, segments, editedSeconds, selection = false, audioFx = null, captions = null, look = null, mix = null, intent, onClose,
 }: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>("720p");
-  const [output, setOutput] = useState<ExportOutput>("mp4");
+  const [output, setOutput] = useState<ExportOutput>(intent === "extract" ? "wav" : "mp4");
   const fxAvailable = isFxActive(audioFx);
-  const [withFx, setWithFx] = useState(true);
+  const [withFx, setWithFx] = useState(intent !== "extract");
+  const mixClips = mix ? mix.tracks.filter((t) => !t.muted).reduce((n, t) => n + t.clips.length, 0) : 0;
+  const mixAvailable = !!mix;
+  const [withMix, setWithMix] = useState(intent !== "extract");
   const captionCount = useMemo(() => (captions ? captionsForSegments(captions.captions, segments).length : 0), [captions, segments]);
   const [withCaptions, setWithCaptions] = useState(true);
   const [sourceBytes, setSourceBytes] = useState<number | null>(null);
@@ -101,6 +109,17 @@ export default function ExportDialog({
                 <small>{fxAvailable ? "From the Audio tab, at the source's full sample rate, in stereo." : "No audio effects are on. Set them up in the Audio tab."}</small>
               </span>
             </label>
+            <label className={mixAvailable ? "ex-check" : "ex-check is-disabled"}>
+              <input type="checkbox" checked={mixAvailable && withMix} disabled={!mixAvailable} onChange={(e) => setWithMix(e.target.checked)} />
+              <span>
+                Mix audio tracks
+                <small>
+                  {mixAvailable
+                    ? `${mixClips} added ${mixClips === 1 ? "clip" : "clips"}${mix!.original.muted ? ", original audio muted" : ""}, from the Tracks tab.`
+                    : "No added tracks. Untick everything here to extract the original audio."}
+                </small>
+              </span>
+            </label>
             {output === "mp4" && (
               <label className={captionCount > 0 ? "ex-check" : "ex-check is-disabled"}>
                 <input type="checkbox" checked={captionCount > 0 && withCaptions} disabled={captionCount === 0}
@@ -128,6 +147,7 @@ export default function ExportDialog({
                   audioFx: fxAvailable && withFx ? audioFx : null,
                   captions: output === "mp4" && captionCount > 0 && withCaptions ? captions : null,
                   look: output === "mp4" && look && !isIdentityLook(look) ? look : null,
+                  mix: mixAvailable && withMix ? mix : null,
                 })}
               >
                 {output === "mp4" ? "Render MP4" : "Render WAV"}
@@ -155,6 +175,7 @@ export default function ExportDialog({
               {state.output === "mp4" && <div><dt>Resolution</dt><dd>{state.width}×{state.height}</dd></div>}
               <div><dt>Codecs</dt><dd>{state.output === "mp4" ? codecName(state.videoCodec) : ""}{state.audioCodec ? `${state.output === "mp4" ? " + " : ""}${codecName(state.audioCodec)}` : ", no audio"}</dd></div>
               {state.output === "mp4" && <div><dt>Captions</dt><dd>{state.captionsBurned > 0 ? `${state.captionsBurned} burned in` : "None"}</dd></div>}
+              {state.tracksMixed > 0 && <div><dt>Audio tracks</dt><dd>{state.tracksMixed} {state.tracksMixed === 1 ? "clip" : "clips"} mixed in</dd></div>}
               <div><dt>Audio effects</dt><dd>{state.audioProcessed ? "Rendered into the file" : "None (original audio)"}</dd></div>
               <div><dt>Render time</dt><dd>{(state.ms / 1000).toFixed(1)}s ({(state.editedSeconds / (state.ms / 1000)).toFixed(1)}× real time)</dd></div>
             </dl>

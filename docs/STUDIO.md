@@ -10,6 +10,7 @@ It has four tabs:
 | **Captions** | Captions from the transcript, edited and styled, burned into exports or downloaded as SRT/VTT |
 | **Video** | Output shape (16:9, 9:16, 1:1, 4:5), fill/fit/blur, crop, brightness/contrast/saturation |
 | **Audio** | Gain, pitch shift, clean-up filters, noise gate, 10-band EQ, compressor, echo, reverb, limiter, fades, normalisation, presets |
+| **Tracks** | Multitrack audio: music, voiceover and sound-effect tracks; mute, level, replace or extract the original audio |
 
 Every change is non-destructive. The uploaded file is never modified. Everything shares one undo history (⌘Z / ⇧⌘Z) and one autosave. What you preview is what exports, because the preview and the exporter run the **same code**.
 
@@ -142,6 +143,79 @@ Fades and peak normalisation are applied on the edited timeline, outside the per
 
 ---
 
+## Tracks (multitrack audio)
+
+- **Model.** `edl.mix` holds:
+  - the original audio's level and mute (the original follows the cut list);
+  - up to 8 added tracks (music, voiceover, sound effects) of clips.
+- **Clip timing.** Clips sit on the **edited** timeline, so a music bed doesn't jump when you remove a pause. Each clip plays `[in, out)` of its file starting at `start`, with its own level and fades. Tracks have a level and a mute.
+- **Editing.**
+  - Drag a clip to move it; it never overlaps its neighbours.
+  - Drag its edges to trim. The left edge moves the in-point, like any editor.
+  - Split at the playhead, delete, and undo all of it.
+- **Original audio.**
+  - **Replace…** mutes the original and opens a new voiceover track.
+  - **Extract (WAV)** exports the edited original with no effects and no added tracks.
+- **Storage.**
+  - Files upload from the browser straight to Cloudinary (`snapcast/audio/<videoId>/`) with a server signature. The server never handles the audio.
+  - Each file is decoded in the browser first, which checks it is playable and measures its duration. Files are capped at 50 MB.
+  - The server only accepts clip URLs inside that video's own folder on the configured account.
+  - Deleting a video deletes the folder.
+- **One mixer.**
+  - Export: `mixInto` (`lib/studio/tracks.ts`) adds clips sample by sample, indexed by absolute frame, so block boundaries never shift a clip. The added tracks join after the Audio tab's effects chain, which processes only the recording's own voice. Master fades and normalisation then apply to the whole mix.
+  - Preview: `useMixPreview` schedules `AudioBufferSourceNode`s with the same gains and fades on the preview's master bus. It resyncs if the audio clock drifts more than 60 ms from the video.
+- **Verified in exported files** (WAV and MP4, measured):
+  - A clip placed at 4.0 s with in-point 1.0 s starts at 4.0000 s and ends at 7.0000 s.
+  - A −6 dB sound-effects track measures exactly half amplitude.
+  - The muted original is absent.
+  - A cut moves the original but not the added clips.
+  - Live preview schedules each clip once per play, at the right offset.
+- **Clip exports.** Added audio is shifted onto the clip's own timeline.
+
+## Transcription languages
+
+Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**, **English**, **Hindi**, **Sanskrit** or **Hinglish** (mixed). Everything runs in the browser with OpenAI Whisper weights (MIT) via transformers.js (Apache-2.0):
+
+| Choice | Model | Download | What it does |
+|---|---|---|---|
+| English | `Xenova/whisper-tiny.en` (q8) | ~41 MB | As before |
+| Hindi, Sanskrit, Auto, Hinglish | `Xenova/whisper-small` (q8, multilingual) | ~240 MB, once, cached | Word timestamps in all modes |
+
+**What was found while building it:**
+- **No language detection in transformers.js.** Without a language, it silently decodes multilingual audio as English. That *translated* a Hindi sample into English text.
+  - SnapCast detects language itself from Whisper's first decoder step.
+  - Detection is restricted to English and Hindi. Hindi is often mistaken for Urdu, which would switch the output to Arabic script.
+- **Sanskrit can't be detected**: a Sanskrit verse scored English 0.81, Sanskrit 0.01. Decoding with Whisper's own Sanskrit token writes romanized Latin. Sanskrit mode therefore decodes with the Hindi token, which gives Devanagari.
+- **Whisper writes one language per call.** Forced to Hindi, English words come out transliterated into Devanagari ("which makes" → "विछ मेख्स").
+  - **Hinglish mode:** each window is decoded as Hindi for context. The window is also split into phrases at short pauses, and each phrase's language is detected. Phrases detected as English are decoded again in English and spliced in by word timestamp.
+  - A language switch with **no pause** can't be separated, so English words inside a Hindi phrase stay in Devanagari.
+- **Hindi punctuation.** The danda (।, ॥) ends sentences and captions.
+- **Fonts.** Captions use Noto Sans Devanagari (OFL), self-hosted, as the second font in every caption style. Latin keeps the template font, Devanagari gets Noto, in both preview and export.
+
+**Measured accuracy** (character error rate against the script read aloud, Node CPU). The test speech is synthetic (macOS voices Samantha, Lekha and Rishi); real voices, accents and microphones will differ:
+
+| Sample | Mode | CER | Script | Speed |
+|---|---|---|---|---|
+| English | English / Auto | 0.000 | Latin ✓ | 10.7× / 2.3× real time |
+| Hindi | Hindi / Auto (detected hi, p=0.98) | 0.112 | Devanagari ✓ | ~2× |
+| Sanskrit verse | Sanskrit | 0.219 | Devanagari ✓ | ~2× |
+| Hinglish (clauses switch at pauses) | **Hinglish** | **0.034** | Devanagari + Latin ✓ | 0.9× |
+| same | Hindi only | 0.404 | English transliterated ✗ | 1.8× |
+| Hinglish (English words mid-phrase) | Hinglish | 0.235 | English clause Latin ✓; "SnapCast", "feature" stay Devanagari | 0.9× |
+
+**Browser check:** the multilingual model ran end to end in the editor:
+- Hindi + Hinglish + English: 23 s of audio.
+- The download plus first run took a few minutes; the model is cached afterwards.
+- Captions were generated with karaoke highlighting.
+- SRT/VTT written in UTF-8 with the right scripts.
+- An MP4 with Devanagari captions burned in rendered correctly.
+
+**Limitations:**
+- The multilingual model is about 6× larger and much slower than the English one. Hinglish runs at roughly real time, because English phrases are decoded twice.
+- Sanskrit spelling is phonetic (sandhi, visarga and vowel length are often wrong); expect to correct captions.
+- Hindi spelling errors are common on proper nouns and English loanwords.
+- Filler words aren't transcribed reliably in any language.
+
 ## What is implemented, and what is not
 
 **Implemented and verified in exported files**
@@ -162,7 +236,7 @@ Fades and peak normalisation are applied on the edited timeline, outside the per
 |---|---|
 | Pitch correction ("autotune"): pitch detection, key and scale, retune speed | Needs a pitch tracker (e.g. YIN) driving a time-varying shift. The shifter above is the building block; detection and scale snapping are not built. Nothing in the UI is called autotune. |
 | Formant-preserving pitch shift | Needs spectral-envelope processing (e.g. LPC or a phase vocoder). |
-| Multitrack audio: music bed, voiceover, ducking | Needs extra uploaded assets (storage), a track model and mixing in the export. |
+| Automatic ducking (music dips under speech) | Track levels are manual today. |
 | Text and image overlays | Fits the existing `drawFrame` → canvas path, but there is no overlay model or UI yet. |
 | Timeline improvements (zoom, track lanes, caption blocks on the timeline) | Not started. |
 | Effects on the public video page | Viewers see cuts only. Audio effects, captions and framing appear in exported files, not in the hosted player. |
@@ -187,8 +261,8 @@ Fades and peak normalisation are applied on the edited timeline, outside the per
 
 | Asset | Licence |
 |---|---|
-| Inter, Montserrat, Bebas Neue fonts (Fontsource 5.3.0 builds) | SIL Open Font License 1.1, licence files in `public/fonts/captions/` |
-| Whisper `Xenova/whisper-tiny.en` weights | MIT (OpenAI Whisper) |
+| Inter, Montserrat, Bebas Neue, Noto Sans Devanagari fonts (Fontsource 5.3.0 builds) | SIL Open Font License 1.1, licence files in `public/fonts/captions/` |
+| Whisper `Xenova/whisper-tiny.en` and `Xenova/whisper-small` weights | MIT (OpenAI Whisper) |
 
 **Runtime dependencies** (versions as installed)
 
@@ -215,7 +289,8 @@ Fades and peak normalisation are applied on the edited timeline, outside the per
 | **Vercel** | Hosting | Any Node host works (`next start`) |
 | **Google OAuth** | Sign-in | Yes, today (the only provider configured) |
 | **Google Gemini** | AI summaries and chapters only. Never editing | Optional |
-| **Hugging Face Hub, jsDelivr** | First-time download of the Whisper model and the ONNX WASM runtime, then cached | Yes, today |
+| **Hugging Face Hub, jsDelivr** | First-time download of the Whisper models (41 MB English, ~240 MB multilingual) and the ONNX WASM runtime, then cached | Yes, today |
+| **Cloudinary (added audio)** | Uploaded music / voiceover / effect files for the Tracks tab | Yes, when tracks are used |
 
 ## Self-hosting migration plan
 

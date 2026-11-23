@@ -16,6 +16,11 @@ import { isPauseLevel, type PauseLevel } from "@/lib/media/pauses";
 import { sanitizeAudioFx, type AudioFx } from "@/lib/studio/fx";
 import { sanitizeCaptionTrack, type CaptionTrack } from "@/lib/studio/captions";
 import { sanitizeLook, type VideoLook } from "@/lib/studio/frame";
+import { audioUrlRule, sanitizeMix, type AudioMix } from "@/lib/studio/tracks";
+import { getSignedUploadParams } from "@/lib/cloudinary";
+
+/** Added-audio URLs must point into this video's folder on our own Cloudinary account. */
+const mixRule = (videoId: string) => audioUrlRule(process.env.CLOUDINARY_CLOUD_NAME ?? "", videoId);
 
 /** Upper bound when the stored duration is unknown: matches LIMITS (24 h). */
 const UNKNOWN_DURATION = 86_400;
@@ -46,6 +51,8 @@ export interface EditorData {
   captions: CaptionTrack | null;
   /** Saved framing/colour settings, validated on the way out. */
   look: VideoLook | null;
+  /** Saved multitrack audio, validated on the way out. */
+  mix: AudioMix | null;
 }
 
 /** Everything the editor needs, for the owner only. */
@@ -75,6 +82,7 @@ export async function getEditorData(videoId: string): Promise<EditorData | null>
     audioFx: row.edl?.audioFx ? sanitizeAudioFx(row.edl.audioFx) : null,
     captions: row.edl?.captions ? sanitizeCaptionTrack(row.edl.captions, row.duration ?? UNKNOWN_DURATION) : null,
     look: row.edl?.look ? sanitizeLook(row.edl.look) : null,
+    mix: row.edl?.mix ? sanitizeMix(row.edl.mix, mixRule(row.videoId)) : null,
   };
 }
 
@@ -116,7 +124,7 @@ export async function saveWordTranscript(
  * track and the video framing. Settings and text only; the source asset is never touched and
  * rendered media is never stored.
  *
- * `audioFx`, `captions` and `look` are optional: a caller that omits one (an editor
+ * `audioFx`, `captions`, `look` and `mix` are optional: a caller that omits one (an editor
  * page loaded before that field existed) keeps whatever is stored instead of
  * wiping it. Pass null to clear it.
  */
@@ -126,14 +134,15 @@ export async function saveEdit(
   pauseLevel: unknown,
   audioFx?: unknown,
   captions?: unknown,
-  look?: unknown
+  look?: unknown,
+  mix?: unknown
 ): Promise<{ cutCount: number }> {
   const { userId, maxDuration } = await requireOwnedVideo(videoId);
   const clean = sanitizeCuts(cuts, maxDuration);
   const level = isPauseLevel(pauseLevel) ? pauseLevel : null;
 
   let stored: StoredEdl | null = null;
-  if (audioFx === undefined || captions === undefined || look === undefined) {
+  if (audioFx === undefined || captions === undefined || look === undefined || mix === undefined) {
     const [row] = await db
       .select({ edl: videos.edl })
       .from(videos)
@@ -150,13 +159,27 @@ export async function saveEdit(
         : sanitizeCaptionTrack(captions, maxDuration);
   const frame: VideoLook | null =
     look === undefined ? stored?.look ?? null : look === null ? null : sanitizeLook(look);
+  const tracks: AudioMix | null =
+    mix === undefined ? stored?.mix ?? null : mix === null ? null : sanitizeMix(mix, mixRule(videoId));
 
   await db
     .update(videos)
-    .set({ edl: { version: 1, cuts: clean, pauseLevel: level, audioFx: fx, captions: track, look: frame }, updatedAt: new Date() })
+    .set({ edl: { version: 1, cuts: clean, pauseLevel: level, audioFx: fx, captions: track, look: frame, mix: tracks }, updatedAt: new Date() })
     .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
 
   revalidatePath(`/video/${videoId}`);
   revalidatePath(`/video/${videoId}/edit`);
   return { cutCount: clean.length };
+}
+
+/**
+ * Signed parameters for uploading one audio file (music, voiceover, sound
+ * effect) straight from the browser to Cloudinary, into this video's own
+ * audio folder. Owner-only. The server never handles the file itself.
+ */
+export async function getAudioUploadParams(videoId: string) {
+  await requireOwnedVideo(videoId);
+  const assetId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  // Cloudinary stores audio under the "video" resource type.
+  return getSignedUploadParams(`snapcast/audio/${videoId}`, assetId, "video");
 }

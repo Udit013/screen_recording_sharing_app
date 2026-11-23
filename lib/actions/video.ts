@@ -19,7 +19,7 @@ import {
 } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { doesContentMatch, getOrderByClause } from "@/lib/utils";
-import { getSignedUploadParams, deleteCloudinaryResource } from "@/lib/cloudinary";
+import { getSignedUploadParams, deleteCloudinaryResource, deleteCloudinaryPrefix } from "@/lib/cloudinary";
 import { SHARE_TOKEN_EXPIRY_DAYS } from "@/constants";
 import { analyzeVideoContent, generateChapters, isGeminiConfigured } from "@/lib/gemini";
 import {
@@ -488,6 +488,8 @@ export const deleteVideo = withError(async (videoId: string) => {
   await Promise.all([
     deleteCloudinaryResource(`snapcast/videos/${videoId}`, "video").catch(() => {}),
     deleteCloudinaryResource(`snapcast/thumbnails/${videoId}`, "image").catch(() => {}),
+    // Added audio tracks (Studio multitrack), if any.
+    deleteCloudinaryPrefix(`snapcast/audio/${videoId}/`, "video").catch(() => {}),
   ]);
 
   revalidatePaths(["/", `/video/${videoId}`]);

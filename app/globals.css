@@ -1788,3 +1788,47 @@ body {
 .vs-aspect.is-on .vs-aspect-shape { color: var(--ed-accent); opacity: 1; }
 .vs-aspect strong { font-size: 0.82rem; }
 .vs-aspect small { font-size: 0.68rem; color: var(--ed-muted); line-height: 1.25; }
+
+/* ── Tracks tab (multitrack audio) ─────────────────────────────────────── */
+.ts-original { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--ed-line); border-radius: 12px; background: var(--ed-soft); }
+.ts-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.88rem; }
+.ts-tag { font-size: 0.72rem; color: var(--ed-muted); }
+.ts-lanes { position: relative; display: flex; flex-direction: column; gap: 10px; }
+.ts-ruler {
+  position: relative; display: flex; justify-content: space-between; font-size: 0.68rem; color: var(--ed-muted);
+  font-variant-numeric: tabular-nums; padding-bottom: 4px; border-bottom: 1px solid var(--ed-line); cursor: pointer; user-select: none;
+}
+.ts-end { position: absolute; top: 0; bottom: -2px; width: 2px; background: var(--ed-ink); opacity: 0.35; }
+.ts-track { border: 1px solid var(--ed-line); border-radius: 12px; padding: 8px 10px; background: #fff; display: flex; flex-direction: column; gap: 6px; }
+.ts-track.is-muted { opacity: 0.6; }
+.ts-track-head { display: flex; align-items: center; gap: 6px; }
+.ts-name { flex: 1; min-width: 0; font: inherit; font-size: 0.85rem; font-weight: 700; border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; background: none; color: var(--ed-ink); }
+.ts-name:focus { outline: none; border-color: var(--ed-accent); }
+.ts-mini { font-size: 0.72rem; font-weight: 700; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--ed-line); background: #fff; color: var(--ed-muted); cursor: pointer; }
+.ts-mini:hover { color: var(--ed-ink); }
+.ts-mini.is-on { color: #fff; background: var(--ed-ink); border-color: var(--ed-ink); }
+.ts-mini.is-danger { color: var(--ed-danger); }
+.ts-lane { position: relative; height: 44px; border-radius: 8px; background: var(--ed-soft); overflow: hidden; }
+.ts-lane::after { content: ""; position: absolute; top: 0; bottom: 0; left: var(--ts-playhead); width: 2px; background: var(--ed-accent); pointer-events: none; }
+.ts-clip {
+  position: absolute; top: 3px; bottom: 3px; min-width: 6px; border-radius: 6px; background: rgba(255, 67, 147, 0.16);
+  border: 1px solid rgba(255, 67, 147, 0.55); color: rgba(255, 67, 147, 0.75); cursor: grab; touch-action: none; overflow: hidden;
+}
+.ts-clip:focus-visible, .ts-clip.is-selected { outline: 2px solid var(--ed-accent); outline-offset: 1px; }
+.ts-clip.is-error { background: rgba(229, 72, 77, 0.12); border-color: var(--ed-danger); color: var(--ed-danger); }
+.ts-clip canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ts-clip-name { position: absolute; left: 6px; top: 2px; font-size: 0.66rem; font-weight: 700; color: var(--ed-ink); white-space: nowrap; pointer-events: none; text-shadow: 0 0 3px #fff; }
+.ts-handle { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
+.ts-handle.is-left { left: 0; }
+.ts-handle.is-right { right: 0; }
+.ts-handle:hover { background: rgba(255, 67, 147, 0.35); }
+.ts-upload { position: absolute; inset: 3px auto 3px 3px; display: flex; align-items: center; gap: 8px; padding: 0 8px; font-size: 0.72rem; font-weight: 700; color: var(--ed-ink); background: #fff; border-radius: 6px; }
+.ts-upload button { font-size: 0.72rem; border: 0; background: none; color: var(--ed-accent); cursor: pointer; font-weight: 700; }
+.ts-empty { position: absolute; inset: 0; width: 100%; border: 1px dashed var(--ed-line); border-radius: 8px; background: none; color: var(--ed-muted); font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+
+/* Transcription language picker */
+.ed-lang { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; font-weight: 700; color: var(--ed-muted); width: 100%; max-width: 300px; text-align: left; }
+.ed-lang select { font: inherit; font-size: 0.88rem; font-weight: 600; color: var(--ed-ink); padding: 8px 10px; border-radius: 10px; border: 1px solid var(--ed-line); background: #fff; }
+.ed-lang.is-compact { width: auto; }
+.ed-lang.is-compact select { font-size: 0.78rem; padding: 4px 8px; }
+.ed-retranscribe { display: inline-flex; align-items: center; gap: 8px; }

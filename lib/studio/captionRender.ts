@@ -17,7 +17,13 @@ const FILE: Record<CaptionFont, string> = {
   montserrat: "montserrat-latin-{w}-normal.woff2",
   bebas: "bebas-neue-latin-400-normal.woff2",
 };
-const FALLBACK = `"Helvetica Neue", Arial, sans-serif`;
+// Hindi/Sanskrit (and Hinglish) captions: the template fonts have no
+// Devanagari glyphs, so Noto Sans Devanagari (OFL) comes second in every
+// stack. The browser picks a font per character: Latin from the template
+// font, Devanagari from Noto, identically in the preview and the export.
+const DEVANAGARI = "SnapCast Devanagari";
+const DEVANAGARI_FILE = "noto-sans-devanagari-devanagari-{w}-normal.woff2";
+const FALLBACK = `"${DEVANAGARI}", "Helvetica Neue", Arial, sans-serif`;
 
 const fontWeight = (style: CaptionStyle) => (style.font === "bebas" ? 400 : style.weight);
 const fontKey = (style: CaptionStyle) => `${style.font}:${fontWeight(style)}`;
@@ -31,7 +37,11 @@ const loaded = new Map<string, Promise<boolean>>();
  * renderer falls back to a system font) if the file can't be fetched.
  */
 export function loadCaptionFont(style: CaptionStyle, origin?: string): Promise<boolean> {
-  const key = fontKey(style);
+  return Promise.all([loadFace(style, origin, false), loadFace(style, origin, true)]).then(([a, b]) => a && b);
+}
+
+function loadFace(style: CaptionStyle, origin: string | undefined, devanagari: boolean): Promise<boolean> {
+  const key = `${devanagari ? "dev" : fontKey(style)}:${fontWeight(style)}`;
   const existing = loaded.get(key);
   if (existing) return existing;
   const fonts = (globalThis as unknown as { fonts?: FontSetLike }).fonts ??
@@ -39,8 +49,9 @@ export function loadCaptionFont(style: CaptionStyle, origin?: string): Promise<b
   if (typeof FontFace === "undefined" || !fonts) return Promise.resolve(false);
   const w = fontWeight(style);
   const base = origin ?? (typeof location !== "undefined" ? location.origin : "");
-  const url = `${base}/fonts/captions/${FILE[style.font].replace("{w}", String(w))}`;
-  const p = new FontFace(FAMILY[style.font], `url(${url}) format("woff2")`, { weight: String(w) })
+  const file = devanagari ? DEVANAGARI_FILE : FILE[style.font];
+  const url = `${base}/fonts/captions/${file.replace("{w}", String(w))}`;
+  const p = new FontFace(devanagari ? DEVANAGARI : FAMILY[style.font], `url(${url}) format("woff2")`, { weight: String(w) })
     .load()
     .then((face) => { fonts.add(face); return true; })
     .catch(() => { loaded.delete(key); return false; });

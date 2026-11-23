@@ -7,18 +7,20 @@ import { createHistoryReducer, sameCuts, type HistoryOf } from "@/lib/media/hist
 import type { AudioFx } from "./fx";
 import type { CaptionTrack } from "./captions";
 import type { VideoLook } from "./frame";
+import type { AudioMix } from "./tracks";
 
 export interface EditDoc {
   cuts: Cut[];
   fx: AudioFx;
   captions: CaptionTrack;
   look: VideoLook;
+  mix: AudioMix;
 }
 
 const sameJson = <T,>(a: T, b: T) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 export const sameDoc = (a: EditDoc, b: EditDoc): boolean =>
-  sameCuts(a.cuts, b.cuts) && sameJson(a.fx, b.fx) && sameJson(a.captions, b.captions) && sameJson(a.look, b.look);
+  sameCuts(a.cuts, b.cuts) && sameJson(a.fx, b.fx) && sameJson(a.captions, b.captions) && sameJson(a.look, b.look) && sameJson(a.mix, b.mix);
 
 export const docHistoryReducer = createHistoryReducer<EditDoc>(sameDoc);
 

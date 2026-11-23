@@ -7,6 +7,7 @@ import type { Range } from "./edl";
 import type { AudioFx } from "@/lib/studio/fx";
 import type { Caption, CaptionStyle } from "@/lib/studio/captions";
 import type { VideoLook } from "@/lib/studio/frame";
+import type { AudioMix } from "@/lib/studio/tracks";
 
 export type ExportPreset = "original" | "1080p" | "720p" | "compact";
 export type ExportQuality = "high" | "medium" | "low";
@@ -36,6 +37,8 @@ export type ExportRequest = {
   captions?: { captions: Caption[]; style: CaptionStyle } | null;
   /** Framing and colour to render (aspect, fit, crop, adjustments). */
   look?: VideoLook | null;
+  /** Multitrack audio: original level/mute plus added clips, mixed into the file. */
+  mix?: AudioMix | null;
 };
 
 export type ExportEvent =
@@ -51,6 +54,8 @@ export type ExportEvent =
       audioProcessed: boolean;
       /** Number of captions burned into the video. */
       captionsBurned: number;
+      /** Number of added audio clips mixed into the file. */
+      tracksMixed: number;
     }
   | { type: "progress"; fraction: number }
   | { type: "done"; buffer: ArrayBuffer; ms: number }

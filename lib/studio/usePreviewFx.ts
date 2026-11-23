@@ -19,7 +19,8 @@ export interface PreviewMeter {
 
 /**
  * Routes the editor's <video> through the effects worklet:
- *   <video> → MediaElementSource → worklet (effects) → fade gain → speakers
+ *   <video> → MediaElementSource → worklet (effects) → original level ─┐
+ *                                     added tracks (useMixPreview) ─────┴→ master (fades) → speakers
  *
  * The AudioContext is created lazily from start() (call it inside the play
  * handler: browsers only allow audio to start from a user gesture). If any
@@ -34,6 +35,9 @@ export function usePreviewFx(videoRef: RefObject<HTMLVideoElement | null>, fx: A
   const ctxRef = useRef<AudioContext | null>(null);
   const nodeRef = useRef<AudioWorkletNode | null>(null);
   const fadeRef = useRef<GainNode | null>(null);
+  const origRef = useRef<GainNode | null>(null);
+  const origGainRef = useRef(1);
+  const [ctxReady, setCtxReady] = useState(0);
   const startingRef = useRef<Promise<void> | null>(null);
   const meterRef = useRef<PreviewMeter>({ inPeak: 0, outPeak: 0, reductionDb: 0 });
   const fxRef = useRef(fx);
@@ -77,14 +81,18 @@ export function usePreviewFx(videoRef: RefObject<HTMLVideoElement | null>, fx: A
           if (e.data.type === "meter") meterRef.current = e.data;
         };
         const fade = ctx.createGain();
+        const orig = ctx.createGain();
+        orig.gain.value = origGainRef.current;
         // Only now take over the element's audio: everything above succeeded.
         const source = ctx.createMediaElementSource(video);
-        source.connect(node).connect(fade).connect(ctx.destination);
+        source.connect(node).connect(orig).connect(fade).connect(ctx.destination);
         node.port.postMessage({ type: "configure", fx: fxRef.current } satisfies FxPortMessage);
         node.port.postMessage({ type: "bypass", value: bypassRef.current } satisfies FxPortMessage);
         ctxRef.current = ctx;
         nodeRef.current = node;
         fadeRef.current = fade;
+        origRef.current = orig;
+        setCtxReady((n) => n + 1);
         if (ctx.state === "suspended") {
           // resume() can stay pending if the browser didn't count this as a
           // user gesture. Don't hang playback on it: retry on the next
@@ -117,6 +125,16 @@ export function usePreviewFx(videoRef: RefObject<HTMLVideoElement | null>, fx: A
     fade.gain.setTargetAtTime(Math.max(0, Math.min(1, gain)), ctx.currentTime, 0.015);
   }, []);
 
+  /** Level of the recording's own audio in the mix (0 = muted). */
+  const setOriginalGain = useCallback((gain: number) => {
+    origGainRef.current = gain;
+    const ctx = ctxRef.current, orig = origRef.current;
+    if (ctx && orig) orig.gain.setTargetAtTime(gain, ctx.currentTime, 0.01);
+  }, []);
+
+  /** The live context and master bus, for added tracks (null until started). */
+  const getBus = useCallback(() => (ctxRef.current && fadeRef.current ? { ctx: ctxRef.current, master: fadeRef.current as AudioNode } : null), []);
+
   /** Clears reverb/delay tails, e.g. after a seek. */
   const resetTails = useCallback(
     () => nodeRef.current?.port.postMessage({ type: "reset" } satisfies FxPortMessage),
@@ -130,8 +148,9 @@ export function usePreviewFx(videoRef: RefObject<HTMLVideoElement | null>, fx: A
       ctxRef.current = null;
       nodeRef.current = null;
       fadeRef.current = null;
+      origRef.current = null;
     };
   }, []);
 
-  return { status, start, setFadeGain, resetTails, meterRef };
+  return { status, start, setFadeGain, resetTails, meterRef, setOriginalGain, getBus, ctxReady };
 }

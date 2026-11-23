@@ -98,8 +98,14 @@ export function wordsFromChunks(
   for (const c of chunks) {
     const text = c.text.trim();
     const [s, e] = c.timestamp;
-    // Whisper emits punctuation-only tokens ("...") with zero duration.
-    if (!/[\p{L}\p{N}]/u.test(text) || !Number.isFinite(s)) continue;
+    // Whisper emits punctuation-only tokens ("...", or the Hindi danda "।")
+    // with zero duration: attach them to the previous word so sentence ends
+    // survive, rather than making them words of their own.
+    if (!/[\p{L}\p{N}]/u.test(text) || !Number.isFinite(s)) {
+      const prev = words[words.length - 1];
+      if (prev && /^[.!?,;:।॥]+$/.test(text) && prev.text.length < 64) prev.text += text;
+      continue;
+    }
     const start = s + offset;
     const end = (e != null && Number.isFinite(e) ? e : s) + offset;
     words.push({ text, start, end: Math.max(start, end) });
@@ -129,7 +135,7 @@ export function groupSentences(
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const next = words[i + 1];
-    const terminal = /[.!?]["')\]]?$/.test(w.text);
+    const terminal = /[.!?।॥]["')\]]?$/.test(w.text);
     const gap = next ? next.start - w.end : Infinity;
     if (!next || terminal || gap > maxGap || i - from + 1 >= maxWords) {
       const slice = words.slice(from, i + 1);

@@ -6,12 +6,22 @@ import { planTranscriptionWindows } from "./silence";
 import type { Range } from "./edl";
 import type { Word } from "./align";
 import type { TranscribeEvent, TranscribeRequest } from "./transcribe.worker";
+import type { SpokenLanguage, TranscriptLanguage } from "./language";
 
 export type TranscriberState =
   | { phase: "idle" }
   | { phase: "model"; loaded: number; total: number }
   | { phase: "transcribing"; done: number; total: number; words: Word[] }
-  | { phase: "done"; words: Word[]; loadMs: number; inferenceMs: number; audioSeconds: number }
+  | {
+      phase: "done";
+      words: Word[];
+      loadMs: number;
+      inferenceMs: number;
+      audioSeconds: number;
+      language: TranscriptLanguage;
+      /** Seconds of speech attributed to each language (detection result). */
+      languages: Partial<Record<SpokenLanguage, number>>;
+    }
   | { phase: "error"; message: string };
 
 /** Runs Whisper in a worker; cancel() terminates it outright. */
@@ -27,11 +37,13 @@ export function useTranscriber() {
 
   useEffect(() => () => workerRef.current?.terminate(), []);
 
-  const start = useCallback((audio: LoadedAudio, silences: Range[]) => {
+  const start = useCallback((audio: LoadedAudio, silences: Range[], language: TranscriptLanguage = "en") => {
     workerRef.current?.terminate();
     const worker = new Worker(new URL("./transcribe.worker.ts", import.meta.url), { type: "module" });
     workerRef.current = worker;
 
+    const windows = planTranscriptionWindows(audio.duration, silences);
+    const planned = windows.length;
     // Model files download in parallel; aggregate bytes across them.
     const files = new Map<string, { loaded: number; total: number }>();
     let loadMs = 0;
@@ -47,11 +59,14 @@ export function useTranscriber() {
         setState({ phase: "model", loaded, total });
       } else if (m.type === "ready") {
         loadMs = m.loadMs;
+        // The model is loaded: show transcription progress straight away
+        // (the first section can take a while on the multilingual model).
+        setState({ phase: "transcribing", done: 0, total: planned, words: [] });
       } else if (m.type === "window") {
         words.push(...m.words);
         setState({ phase: "transcribing", done: m.index + 1, total: m.total, words: [...words] });
       } else if (m.type === "done") {
-        setState({ phase: "done", words: m.words, loadMs, inferenceMs: m.inferenceMs, audioSeconds: audio.duration });
+        setState({ phase: "done", words: m.words, loadMs, inferenceMs: m.inferenceMs, audioSeconds: audio.duration, language, languages: m.languages });
         worker.terminate();
         workerRef.current = null;
       } else if (m.type === "error") {
@@ -62,10 +77,10 @@ export function useTranscriber() {
     };
     worker.onerror = (e) => setState({ phase: "error", message: e.message || "The transcription worker crashed." });
 
-    const windows = planTranscriptionWindows(audio.duration, silences);
+
     // Transfer a copy: the editor keeps its own samples for the waveform.
     const copy = audio.samples.slice();
-    const req: TranscribeRequest = { type: "transcribe", audio: copy, sampleRate: audio.sampleRate, windows };
+    const req: TranscribeRequest = { type: "transcribe", audio: copy, sampleRate: audio.sampleRate, windows, language };
     worker.postMessage(req, [copy.buffer]);
   }, []);
 
