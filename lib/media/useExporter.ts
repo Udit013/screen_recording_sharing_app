@@ -17,6 +17,7 @@ export type ExporterState =
 export interface ExportOptions {
   audioFx?: AudioFx | null;
   output?: ExportOutput;
+  captions?: ExportRequest["captions"];
 }
 
 /** Renders an edit in a worker. Object URLs are revoked on reset/unmount. */
@@ -78,6 +79,7 @@ export function useExporter() {
       preset,
       audioFx: options.audioFx ?? null,
       output: options.output ?? "mp4",
+      captions: options.captions ?? null,
     };
     worker.postMessage(req);
   }, []);

@@ -3,6 +3,9 @@ import { WavWriter } from "@/lib/studio/wav";
 import { docHistoryReducer, initialDocHistory, type EditDoc } from "@/lib/studio/doc";
 import { defaultFx, untouchedFx } from "@/lib/studio/fx";
 import { MERGE_WINDOW_MS } from "@/lib/media/history";
+import { emptyCaptionTrack } from "@/lib/studio/captions";
+
+const captions = emptyCaptionTrack();
 
 describe("WavWriter", () => {
   it("writes a valid 16-bit stereo PCM header and interleaved samples", () => {
@@ -32,8 +35,8 @@ describe("WavWriter", () => {
 });
 
 describe("editor history (cuts + audio settings)", () => {
-  const start: EditDoc = { cuts: [], fx: untouchedFx() };
-  const withGain = (db: number): EditDoc => ({ cuts: [], fx: { ...defaultFx(), inputGainDb: db } });
+  const start: EditDoc = { cuts: [], fx: untouchedFx(), captions };
+  const withGain = (db: number): EditDoc => ({ cuts: [], fx: { ...defaultFx(), inputGainDb: db }, captions });
 
   it("collapses one slider drag into a single undo step", () => {
     let h = initialDocHistory(start);
@@ -69,6 +72,6 @@ describe("editor history (cuts + audio settings)", () => {
 
   it("ignores a commit that changes nothing", () => {
     const h = initialDocHistory(start);
-    expect(docHistoryReducer(h, { type: "commit", value: { cuts: [], fx: untouchedFx() } })).toBe(h);
+    expect(docHistoryReducer(h, { type: "commit", value: { cuts: [], fx: untouchedFx(), captions: emptyCaptionTrack() } })).toBe(h);
   });
 });

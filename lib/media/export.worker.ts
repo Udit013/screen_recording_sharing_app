@@ -25,6 +25,7 @@ import {
   QUALITY_LOW,
   QUALITY_MEDIUM,
   UrlSource,
+  VideoSample,
   VideoSampleSink,
   VideoSampleSource,
   getFirstEncodableAudioCodec,
@@ -35,6 +36,8 @@ import type { Range } from "./edl";
 import { createAudioEngine } from "@/lib/studio/dsp";
 import { defaultFx, fadeGainAt, isFxActive, type AudioFx } from "@/lib/studio/fx";
 import { WavWriter } from "@/lib/studio/wav";
+import { captionAt, captionsForSegments, sanitizeCaptionStyle, type Caption, type CaptionStyle } from "@/lib/studio/captions";
+import { drawCaption, loadCaptionFont } from "@/lib/studio/captionRender";
 import {
   EXPORT_PRESETS,
   type ExportEvent,
@@ -233,6 +236,13 @@ async function measureAacDelay(sampleRate: number, channels: number): Promise<nu
   }
 }
 
+/**
+ * Longest a composited frame may be held. Screen recordings are often
+ * variable-frame-rate (a static screen produces no new frames for seconds),
+ * so a caption that changes mid-hold needs frames of its own.
+ */
+const MAX_HOLD = 1 / 30;
+
 /** Normalization gain: peak → target, capped at +24 dB so silence isn't amplified into noise. */
 const normalizeGain = (peak: number, targetDb: number) =>
   peak > 0 ? Math.min(Math.pow(10, targetDb / 20) / peak, Math.pow(10, 24 / 20)) : 1;
@@ -253,7 +263,7 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
       const aTrack = await input.getPrimaryAudioTrack();
       if (!aTrack) throw new Error("This video has no audio track to export.");
       if (!(await aTrack.canDecode())) throw new Error("This browser can't decode the source audio codec.");
-      post({ type: "start", output: outputKind, width: 0, height: 0, videoCodec: null, audioCodec: "pcm-s16", editedSeconds: editedSecondsAll, audioProcessed: !!fx });
+      post({ type: "start", output: outputKind, width: 0, height: 0, videoCodec: null, audioCodec: "pcm-s16", editedSeconds: editedSecondsAll, audioProcessed: !!fx, captionsBurned: 0 });
       const gain = fx?.normalize.enabled
         ? normalizeGain(await measurePeak(aTrack, segments, fx, editedSecondsAll), fx.normalize.targetDb)
         : 1;
@@ -302,6 +312,22 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
         })
       : null;
 
+    // Burned-in captions: composite each frame on a canvas at output size.
+    let burn: { captions: Caption[]; style: CaptionStyle; ctx: OffscreenCanvasRenderingContext2D; canvas: OffscreenCanvas } | null = null;
+    if (msg.data.captions && msg.data.captions.captions.length > 0) {
+      if (typeof OffscreenCanvas === "undefined") throw new Error("This browser can't burn in captions (no OffscreenCanvas).");
+      const style = sanitizeCaptionStyle(msg.data.captions.style);
+      const mapped = captionsForSegments(msg.data.captions.captions, segments);
+      if (mapped.length > 0) {
+        const canvas = new OffscreenCanvas(width, height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("This browser can't burn in captions (no 2D canvas in workers).");
+        // Same font files as the preview; falls back to a system font if offline.
+        await loadCaptionFont(style, self.location.origin);
+        burn = { captions: mapped, style, ctx, canvas };
+      }
+    }
+
     const output = new Output({
       format: new Mp4OutputFormat({ fastStart: "in-memory" }),
       target: new BufferTarget(),
@@ -313,7 +339,8 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
       // type marks it optional). The size already keeps the source aspect
       // ratio, so "fill" only absorbs sub-pixel rounding to even dimensions,
       // where "contain" could leave a 1 px black edge.
-      transform: scale < 1 ? { width, height, fit: "fill" } : undefined,
+      // (When compositing, frames are already drawn at the output size.)
+      transform: scale < 1 && !burn ? { width, height, fit: "fill" } : undefined,
     });
     output.addVideoTrack(videoSource);
     const audioSource = audioCodec ? new AudioSampleSource({ codec: audioCodec, bitrate: QUALITY_HIGH }) : null;
@@ -321,7 +348,7 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     await output.start();
 
     const editedSeconds = segments.reduce((s, r) => s + (r.end - r.start), 0);
-    post({ type: "start", output: outputKind, width, height, videoCodec, audioCodec, editedSeconds, audioProcessed: processAudio && !!audioCodec });
+    post({ type: "start", output: outputKind, width, height, videoCodec, audioCodec, editedSeconds, audioProcessed: processAudio && !!audioCodec, captionsBurned: burn?.captions.length ?? 0 });
 
     // Progress is driven by the video track (the expensive one).
     let videoDone = 0;
@@ -353,9 +380,27 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
           // frame is always kept so the output starts at zero.
           if (wroteVideo && visibleEnd - visibleStart < sample.duration / 2) { sample.close(); continue; }
           wroteVideo = true;
-          sample.setTimestamp(offset + (visibleStart - seg.start));
-          sample.setDuration(visibleEnd - visibleStart);
-          await videoSource.add(sample);
+          const editedStart = offset + (visibleStart - seg.start);
+          const editedLen = visibleEnd - visibleStart;
+          if (burn) {
+            // Draw the frame once per hold step, with the caption as it is at
+            // that moment; a long-held frame becomes several short ones.
+            const steps = Math.max(1, Math.ceil(editedLen / MAX_HOLD - 0.5));
+            for (let k = 0; k < steps; k++) {
+              const t0 = editedStart + (editedLen * k) / steps;
+              const t1 = editedStart + (editedLen * (k + 1)) / steps;
+              const { ctx, canvas, captions: caps, style } = burn;
+              sample.draw(ctx, 0, 0, width, height);
+              drawCaption(ctx, captionAt(caps, t0), t0, style, width, height);
+              const frame = new VideoSample(canvas, { timestamp: t0, duration: t1 - t0 });
+              await videoSource.add(frame);
+              frame.close();
+            }
+          } else {
+            sample.setTimestamp(editedStart);
+            sample.setDuration(editedLen);
+            await videoSource.add(sample);
+          }
           sample.close();
           videoDone = offset + (visibleEnd - seg.start);
           report();

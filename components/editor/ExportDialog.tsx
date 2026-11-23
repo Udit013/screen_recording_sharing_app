@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useExporter } from "@/lib/media/useExporter";
 import { EXPORT_PRESETS, type ExportOutput, type ExportPreset } from "@/lib/media/export-presets";
 import { isFxActive, type AudioFx } from "@/lib/studio/fx";
+import { captionsForSegments, type Caption, type CaptionStyle } from "@/lib/studio/captions";
 import type { Range } from "@/lib/media/edl";
 import { formatDuration } from "@/lib/utils";
 import { useModal } from "@/lib/useModal";
@@ -17,6 +18,8 @@ interface ExportDialogProps {
   selection?: boolean;
   /** The Audio tab's effects; rendered into the file when active. */
   audioFx?: AudioFx | null;
+  /** The caption track (source time) when "burn in" is on; null otherwise. */
+  captions?: { captions: Caption[]; style: CaptionStyle } | null;
   onClose: () => void;
 }
 
@@ -25,12 +28,14 @@ const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV
 const codecName = (c: string | null) => (c ? CODEC_NAMES[c] ?? c : "");
 
 export default function ExportDialog({
-  videoUrl, title, segments, editedSeconds, selection = false, audioFx = null, onClose,
+  videoUrl, title, segments, editedSeconds, selection = false, audioFx = null, captions = null, onClose,
 }: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>("720p");
   const [output, setOutput] = useState<ExportOutput>("mp4");
   const fxAvailable = isFxActive(audioFx);
   const [withFx, setWithFx] = useState(true);
+  const captionCount = useMemo(() => (captions ? captionsForSegments(captions.captions, segments).length : 0), [captions, segments]);
+  const [withCaptions, setWithCaptions] = useState(true);
   const [sourceBytes, setSourceBytes] = useState<number | null>(null);
   const { state, start, reset } = useExporter();
   const busy = state.phase === "preparing" || state.phase === "rendering";
@@ -93,6 +98,20 @@ export default function ExportDialog({
                 <small>{fxAvailable ? "From the Audio tab, at the source's full sample rate, in stereo." : "No audio effects are on. Set them up in the Audio tab."}</small>
               </span>
             </label>
+            {output === "mp4" && (
+              <label className={captionCount > 0 ? "ex-check" : "ex-check is-disabled"}>
+                <input type="checkbox" checked={captionCount > 0 && withCaptions} disabled={captionCount === 0}
+                  onChange={(e) => setWithCaptions(e.target.checked)} />
+                <span>
+                  Burn in captions
+                  <small>
+                    {captionCount > 0
+                      ? `${captionCount} ${captionCount === 1 ? "caption" : "captions"}, drawn exactly as in the preview.`
+                      : "No captions to burn in. Add them in the Captions tab."}
+                  </small>
+                </span>
+              </label>
+            )}
             {state.phase === "error" && <p className="ex-error" role="alert">{state.message}</p>}
             <p className="ex-note">
               Encoded with your device&apos;s hardware encoder via WebCodecs. Nothing is uploaded; the original video is untouched.
@@ -101,7 +120,11 @@ export default function ExportDialog({
               <button className="ed-btn" onClick={onClose}>Cancel</button>
               <button
                 className="ed-btn is-primary"
-                onClick={() => start(videoUrl, segments, preset, { output, audioFx: fxAvailable && withFx ? audioFx : null })}
+                onClick={() => start(videoUrl, segments, preset, {
+                  output,
+                  audioFx: fxAvailable && withFx ? audioFx : null,
+                  captions: output === "mp4" && captionCount > 0 && withCaptions ? captions : null,
+                })}
               >
                 {output === "mp4" ? "Render MP4" : "Render WAV"}
               </button>
@@ -127,6 +150,7 @@ export default function ExportDialog({
               )}
               {state.output === "mp4" && <div><dt>Resolution</dt><dd>{state.width}×{state.height}</dd></div>}
               <div><dt>Codecs</dt><dd>{state.output === "mp4" ? codecName(state.videoCodec) : ""}{state.audioCodec ? `${state.output === "mp4" ? " + " : ""}${codecName(state.audioCodec)}` : ", no audio"}</dd></div>
+              {state.output === "mp4" && <div><dt>Captions</dt><dd>{state.captionsBurned > 0 ? `${state.captionsBurned} burned in` : "None"}</dd></div>}
               <div><dt>Audio effects</dt><dd>{state.audioProcessed ? "Rendered into the file" : "None (original audio)"}</dd></div>
               <div><dt>Render time</dt><dd>{(state.ms / 1000).toFixed(1)}s ({(state.editedSeconds / (state.ms / 1000)).toFixed(1)}× real time)</dd></div>
             </dl>

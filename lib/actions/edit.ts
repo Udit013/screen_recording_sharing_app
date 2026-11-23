@@ -4,7 +4,7 @@
 // every viewer of a video sees, and the transcript feeds search and AI.
 
 import { db } from "@/drizzle/db";
-import { videos } from "@/drizzle/schema";
+import { videos, type StoredEdl } from "@/drizzle/schema";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
@@ -14,6 +14,7 @@ import { groupSentences, sentencesToTranscriptEntries, type Word } from "@/lib/m
 import type { Cut } from "@/lib/media/edl";
 import { isPauseLevel, type PauseLevel } from "@/lib/media/pauses";
 import { sanitizeAudioFx, type AudioFx } from "@/lib/studio/fx";
+import { sanitizeCaptionTrack, type CaptionTrack } from "@/lib/studio/captions";
 
 /** Upper bound when the stored duration is unknown: matches LIMITS (24 h). */
 const UNKNOWN_DURATION = 86_400;
@@ -40,6 +41,8 @@ export interface EditorData {
   pauseLevel: PauseLevel | null;
   /** Saved Audio Studio settings, validated on the way out too. */
   audioFx: AudioFx | null;
+  /** Saved caption track (source-time captions + style), validated on the way out. */
+  captions: CaptionTrack | null;
 }
 
 /** Everything the editor needs, for the owner only. */
@@ -67,6 +70,7 @@ export async function getEditorData(videoId: string): Promise<EditorData | null>
     cuts: row.edl?.cuts ?? [],
     pauseLevel: row.edl?.pauseLevel ?? null,
     audioFx: row.edl?.audioFx ? sanitizeAudioFx(row.edl.audioFx) : null,
+    captions: row.edl?.captions ? sanitizeCaptionTrack(row.edl.captions, row.duration ?? UNKNOWN_DURATION) : null,
   };
 }
 
@@ -104,37 +108,45 @@ export async function saveWordTranscript(
 }
 
 /**
- * Stores the edit: the cut list and the Audio Studio settings. Settings only;
- * the source asset is never touched and rendered media is never stored.
+ * Stores the edit: the cut list, the Audio Studio settings and the caption
+ * track. Settings and text only; the source asset is never touched and
+ * rendered media is never stored.
  *
- * `audioFx` is optional: a caller that omits it (an editor page loaded before
- * this field existed) keeps whatever is stored instead of wiping it. Pass
- * null to clear it.
+ * `audioFx` and `captions` are optional: a caller that omits one (an editor
+ * page loaded before that field existed) keeps whatever is stored instead of
+ * wiping it. Pass null to clear it.
  */
 export async function saveEdit(
   videoId: string,
   cuts: unknown,
   pauseLevel: unknown,
-  audioFx?: unknown
+  audioFx?: unknown,
+  captions?: unknown
 ): Promise<{ cutCount: number }> {
   const { userId, maxDuration } = await requireOwnedVideo(videoId);
   const clean = sanitizeCuts(cuts, maxDuration);
   const level = isPauseLevel(pauseLevel) ? pauseLevel : null;
 
-  let fx: AudioFx | null;
-  if (audioFx === undefined) {
+  let stored: StoredEdl | null = null;
+  if (audioFx === undefined || captions === undefined) {
     const [row] = await db
       .select({ edl: videos.edl })
       .from(videos)
       .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
-    fx = row?.edl?.audioFx ?? null;
-  } else {
-    fx = audioFx === null ? null : sanitizeAudioFx(audioFx);
+    stored = row?.edl ?? null;
   }
+  const fx: AudioFx | null =
+    audioFx === undefined ? stored?.audioFx ?? null : audioFx === null ? null : sanitizeAudioFx(audioFx);
+  const track: CaptionTrack | null =
+    captions === undefined
+      ? stored?.captions ?? null
+      : captions === null
+        ? null
+        : sanitizeCaptionTrack(captions, maxDuration);
 
   await db
     .update(videos)
-    .set({ edl: { version: 1, cuts: clean, pauseLevel: level, audioFx: fx }, updatedAt: new Date() })
+    .set({ edl: { version: 1, cuts: clean, pauseLevel: level, audioFx: fx, captions: track }, updatedAt: new Date() })
     .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
 
   revalidatePath(`/video/${videoId}`);

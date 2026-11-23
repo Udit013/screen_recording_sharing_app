@@ -5,6 +5,7 @@
 
 import type { Range } from "./edl";
 import type { AudioFx } from "@/lib/studio/fx";
+import type { Caption, CaptionStyle } from "@/lib/studio/captions";
 
 export type ExportPreset = "original" | "1080p" | "720p" | "compact";
 export type ExportQuality = "high" | "medium" | "low";
@@ -30,6 +31,8 @@ export type ExportRequest = {
   audioFx?: AudioFx | null;
   /** "wav" renders the edited, processed audio alone. Default "mp4". */
   output?: ExportOutput;
+  /** Captions to burn into the video, in SOURCE time (mapped onto the segments in the worker). */
+  captions?: { captions: Caption[]; style: CaptionStyle } | null;
 };
 
 export type ExportEvent =
@@ -43,6 +46,8 @@ export type ExportEvent =
       editedSeconds: number;
       /** True when audio effects were rendered into the file. */
       audioProcessed: boolean;
+      /** Number of captions burned into the video. */
+      captionsBurned: number;
     }
   | { type: "progress"; fraction: number }
   | { type: "done"; buffer: ArrayBuffer; ms: number }

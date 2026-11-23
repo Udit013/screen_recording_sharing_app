@@ -1708,3 +1708,65 @@ body {
 .ex-check small { font-size: 0.76rem; font-weight: 500; color: #6c6685; }
 .ex-check.is-disabled { opacity: 0.6; cursor: not-allowed; }
 .ex-preview-audio { width: 100%; }
+
+/* ── Captions (editor overlay + Captions tab) ─────────────────────────── */
+/* Self-hosted OFL fonts, shared with the export worker (lib/studio/captionRender.ts). */
+@font-face { font-family: "SnapCast Montserrat"; src: url("/fonts/captions/montserrat-latin-900-normal.woff2") format("woff2"); font-weight: 900; font-display: swap; }
+@font-face { font-family: "SnapCast Bebas Neue"; src: url("/fonts/captions/bebas-neue-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "SnapCast Inter"; src: url("/fonts/captions/inter-latin-800-normal.woff2") format("woff2"); font-weight: 800; font-display: swap; }
+
+.ed-captions { position: absolute; pointer-events: none; }
+
+.cs { display: flex; flex-direction: column; gap: 12px; padding: 14px; min-width: 0; }
+.cs .ed-empty .ed-btn { width: 100%; max-width: 280px; }
+.as-master { padding: 10px 12px; border: 1px solid var(--ed-line); border-radius: 12px; background: var(--ed-soft); }
+.as-select {
+  font-size: 0.82rem; font-weight: 600; color: var(--ed-ink); padding: 6px 28px 6px 10px; border-radius: 10px;
+  border: 1px solid var(--ed-line); background-color: #fff; max-width: 220px;
+}
+.cs-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.cs-actions .ed-btn { padding: 6px 12px; font-size: 0.8rem; }
+
+.cs-templates { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.cs-templates legend { font-size: 0.78rem; font-weight: 700; color: var(--ed-muted); margin-bottom: 6px; padding: 0; }
+.cs-tpl {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px 9px; border-radius: 12px;
+  border: 1px solid var(--ed-line); background: #fff; font-size: 0.74rem; font-weight: 700; color: var(--ed-ink); cursor: pointer;
+}
+.cs-tpl:hover { border-color: rgba(108, 102, 133, 0.35); }
+.cs-tpl.is-on { border-color: var(--ed-accent); box-shadow: 0 0 0 2px rgba(255, 67, 147, 0.18); }
+.cs-tpl-sample {
+  display: flex; align-items: center; justify-content: center; width: 100%; height: 34px; border-radius: 8px;
+  background: linear-gradient(135deg, #3a3550, #1c1a26); color: #fff; font-size: 1.05rem; font-weight: 800;
+  font-family: "SnapCast Inter", system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.cs-tpl-sample.is-bold-reels, .cs-tpl-sample.is-word-pop { font-family: "SnapCast Montserrat", system-ui, sans-serif; font-weight: 900; -webkit-text-stroke: 1px #000; text-transform: uppercase; }
+.cs-tpl-sample.is-karaoke { font-family: "SnapCast Montserrat", system-ui, sans-serif; color: #ffd400; }
+.cs-tpl-sample.is-modern { background: #111; color: #fff; }
+.cs-tpl-sample.is-minimal { font-size: 0.8rem; font-weight: 600; text-shadow: none; }
+
+.cs-color { margin-left: 10px; width: 32px; height: 22px; padding: 0; border: 1px solid var(--ed-line); border-radius: 6px; background: none; vertical-align: middle; cursor: pointer; }
+.cs .as-row > label:only-child { display: flex; align-items: center; justify-content: space-between; grid-column: 1 / -1; }
+
+.cs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.cs-list li { border: 1px solid var(--ed-line); border-radius: 12px; padding: 8px 10px; background: #fff; display: flex; flex-direction: column; gap: 6px; }
+.cs-list li.is-active { border-color: var(--ed-accent); box-shadow: 0 0 0 2px rgba(255, 67, 147, 0.14); }
+.cs-list li.is-cut { opacity: 0.55; background: var(--ed-soft); }
+.cs-item-head { display: flex; align-items: center; gap: 8px; }
+.cs-time { font-size: 0.75rem; font-weight: 700; color: var(--ed-muted); font-variant-numeric: tabular-nums; background: none; border: 0; padding: 2px 0; cursor: pointer; }
+.cs-time:hover { color: var(--ed-accent); }
+.cs-nudge { margin-left: auto; display: inline-flex; gap: 2px; }
+.cs-nudge button { width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--ed-line); background: #fff; font-size: 0.72rem; color: var(--ed-muted); cursor: pointer; }
+.cs-nudge button:nth-child(2) { margin-right: 6px; }
+.cs-nudge button:hover { color: var(--ed-ink); border-color: rgba(108, 102, 133, 0.35); }
+.cs-text {
+  width: 100%; resize: vertical; font: inherit; font-size: 0.88rem; line-height: 1.4; color: var(--ed-ink);
+  border: 1px solid transparent; border-radius: 8px; padding: 4px 6px; background: var(--ed-soft);
+}
+.cs-text:focus { outline: none; border-color: var(--ed-accent); background: #fff; }
+.cs-item-actions { display: flex; gap: 12px; }
+.cs-item-actions button { background: none; border: 0; padding: 0; font-size: 0.75rem; font-weight: 700; color: var(--ed-muted); cursor: pointer; }
+.cs-item-actions button:hover:not(:disabled) { color: var(--ed-ink); }
+.cs-item-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.cs-item-actions .is-danger { margin-left: auto; color: var(--ed-danger); }
+@media (max-width: 480px) { .cs-templates { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -12,6 +12,7 @@ import type { Word } from "@/lib/media/align";
 import type { Cut } from "@/lib/media/edl";
 import type { PauseLevel } from "@/lib/media/pauses";
 import type { AudioFx } from "@/lib/studio/fx";
+import type { CaptionTrack } from "@/lib/studio/captions";
 
 export interface StoredEdl {
   version: 1;
@@ -23,6 +24,11 @@ export interface StoredEdl {
    * still loads). Settings only: rendered audio is never stored.
    */
   audioFx?: AudioFx | null;
+  /**
+   * Caption track: text and timings in SOURCE time, plus style. Optional for
+   * the same reason. Never contains media.
+   */
+  captions?: CaptionTrack | null;
 }
 
 export const user = pgTable("user", {

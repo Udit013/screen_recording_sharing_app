@@ -8,6 +8,8 @@ import { useTranscriber } from "@/lib/media/useTranscriber";
 import { docHistoryReducer, initialDocHistory } from "@/lib/studio/doc";
 import { fadeGainAt, untouchedFx, type AudioFx } from "@/lib/studio/fx";
 import { usePreviewFx } from "@/lib/studio/usePreviewFx";
+import { emptyCaptionTrack, toEditedCaptions, type CaptionTrack } from "@/lib/studio/captions";
+import { useCaptionOverlay } from "@/lib/studio/useCaptionOverlay";
 import {
   clipSegments, keptSegments, mergeRanges, nextPlayableTime, isInsideCut, roundMs, sourceToEdited, subtractRange, summarizeEdit,
   type Cut, type Range,
@@ -18,6 +20,7 @@ import { formatDuration } from "@/lib/utils";
 import Timeline from "./Timeline";
 import TranscriptPane, { type PauseMarker } from "./TranscriptPane";
 import ExportDialog from "./ExportDialog";
+import CaptionStudio from "./CaptionStudio";
 import AudioStudio from "./AudioStudio";
 
 type Ready = Extract<AnalysisState, { status: "ready" }>;
@@ -43,9 +46,10 @@ function saveErrorMessage(err: unknown): string {
   return msg.length > 120 ? `${msg.slice(0, 117)}…` : msg;
 }
 
-type SideTab = "transcript" | "audio";
+type SideTab = "transcript" | "captions" | "audio";
 const SIDE_TABS: { id: SideTab; label: string }[] = [
   { id: "transcript", label: "Transcript" },
+  { id: "captions", label: "Captions" },
   { id: "audio", label: "Audio" },
 ];
 const secs = (t: number) => (t >= 60 ? clock(t) : `${t.toFixed(1)}s`);
@@ -142,9 +146,15 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   // ── Edit state ──────────────────────────────────────────────────────────
   // One undoable document: the cut list and the Audio Studio settings.
   const initialFx = useMemo(() => data.audioFx ?? untouchedFx(), [data.audioFx]);
-  const [history, dispatch] = useReducer(docHistoryReducer, { cuts: data.cuts, fx: initialFx }, initialDocHistory);
+  const initialCaptions = useMemo(() => data.captions ?? emptyCaptionTrack(), [data.captions]);
+  const [history, dispatch] = useReducer(
+    docHistoryReducer,
+    { cuts: data.cuts, fx: initialFx, captions: initialCaptions },
+    initialDocHistory
+  );
   const cuts = history.present.cuts;
   const fx = history.present.fx;
+  const captions = history.present.captions;
   const presentRef = useRef(history.present);
   useEffect(() => { presentRef.current = history.present; });
   const merged = useMemo(() => mergeRanges(cuts, duration), [cuts, duration]);
@@ -165,6 +175,17 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
       }),
     []
   );
+  const setCaptions = useCallback(
+    (next: CaptionTrack, mergeKey?: string) =>
+      dispatch({
+        type: "commit",
+        value: { ...presentRef.current, captions: next },
+        mergeKey: mergeKey ? `cap:${mergeKey}` : undefined,
+        at: performance.now(),
+      }),
+    []
+  );
+  const editedCaptions = useMemo(() => toEditedCaptions(captions.captions, merged), [captions.captions, merged]);
 
   // Seconds each level would remove on top of the manual cuts: measured on the
   // real edit, so the numbers on the buttons are exactly what you'd get.
@@ -249,6 +270,22 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [mode, setMode] = useState<"edited" | "original">("edited");
+
+  // Captions over the preview, drawn by the same renderer as the export. In
+  // "Original" mode they're shown at their source times, uncut.
+  const captionCanvasRef = useRef<HTMLCanvasElement>(null);
+  const sortedSourceCaptions = useMemo(
+    () => [...captions.captions].sort((a, b) => a.start - b.start),
+    [captions.captions]
+  );
+  useCaptionOverlay(
+    videoRef,
+    captionCanvasRef,
+    mode === "edited" ? editedCaptions : sortedSourceCaptions,
+    captions.style,
+    mode === "edited" ? merged : null,
+    captions.burnIn && captions.captions.length > 0
+  );
   const mergedRef = useRef(merged);
   const modeRef = useRef(mode);
   const editedDurationRef = useRef(summary.editedDuration);
@@ -388,13 +425,13 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const [save, setSave] = useState<{ status: "saved" | "saving" | "error"; message?: string }>({ status: "saved" });
   const [retryTick, setRetryTick] = useState(0);
   const saveLevel = level === "off" || level === "custom" ? null : level;
-  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel, initialFx]));
+  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel, initialFx, initialCaptions]));
   const seqRef = useRef(0);
   const inFlightRef = useRef(0);
 
   // The edit waiting for the debounce. Kept in a ref so leaving the editor
   // through an in-app link (which beforeunload never sees) can still send it.
-  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null; fx: AudioFx } | null>(null);
+  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null; fx: AudioFx; captions: CaptionTrack } | null>(null);
 
   const sendPending = useCallback(() => {
     const p = pendingRef.current;
@@ -403,7 +440,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     sentKeyRef.current = p.key;
     const seq = ++seqRef.current;
     inFlightRef.current++;
-    saveEdit(data.videoId, p.cuts, p.level, p.fx)
+    saveEdit(data.videoId, p.cuts, p.level, p.fx, p.captions)
       .then(() => { if (seq === seqRef.current) setSave({ status: "saved" }); })
       .catch((err) => {
         if (seq !== seqRef.current) return;
@@ -414,7 +451,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   }, [data.videoId]);
 
   useEffect(() => {
-    const key = JSON.stringify([cuts, saveLevel, fx]);
+    const key = JSON.stringify([cuts, saveLevel, fx, captions]);
     if (key === sentKeyRef.current) {
       // e.g. an edit undone before it was sent: nothing new to store.
       pendingRef.current = null;
@@ -422,10 +459,10 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
       return;
     }
     setSave({ status: "saving" });
-    pendingRef.current = { key, cuts, level: saveLevel, fx };
+    pendingRef.current = { key, cuts, level: saveLevel, fx, captions };
     const timer = setTimeout(sendPending, 700);
     return () => clearTimeout(timer);
-  }, [cuts, saveLevel, fx, retryTick, sendPending]);
+  }, [cuts, saveLevel, fx, captions, retryTick, sendPending]);
 
   // Unmount (navigating away inside the app): send what the debounce held.
   useEffect(() => () => sendPending(), [sendPending]);
@@ -570,6 +607,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
               onTimeUpdate={skipAndSync}
               onSeeked={(e) => { if (e.currentTarget.paused) setCurrentTime(e.currentTarget.currentTime); }}
             />
+            <canvas ref={captionCanvasRef} className="ed-captions" aria-hidden />
             {mode === "edited" && isInsideCut(currentTime, merged) && !playing && (
               <span className="ed-video-flag">This moment is cut</span>
             )}
@@ -765,6 +803,20 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
               )
             )}
           </div>
+          ) : sideTab === "captions" ? (
+          <div className="ed-tabpanel is-scroll" role="tabpanel" id="ed-panel-captions" aria-labelledby="ed-tab-captions">
+            <CaptionStudio
+              track={captions}
+              onChange={setCaptions}
+              words={shownWords}
+              merged={merged}
+              duration={duration}
+              currentTime={currentTime}
+              onSeek={seek}
+              title={data.title}
+              onOpenTranscript={() => setSideTab("transcript")}
+            />
+          </div>
           ) : (
           <div className="ed-tabpanel is-scroll" role="tabpanel" id="ed-panel-audio" aria-labelledby="ed-tab-audio">
             <AudioStudio
@@ -807,6 +859,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
           selection={exportJob.selection}
           editedSeconds={exportJob.segments.reduce((s, r) => s + (r.end - r.start), 0)}
           audioFx={fx}
+          captions={captions.burnIn && captions.captions.length > 0 ? { captions: captions.captions, style: captions.style } : null}
           onClose={() => setExportJob(null)}
         />
       )}
