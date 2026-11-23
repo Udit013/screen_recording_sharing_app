@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useExporter } from "@/lib/media/useExporter";
-import { EXPORT_PRESETS, type ExportPreset } from "@/lib/media/export-presets";
+import { EXPORT_PRESETS, type ExportOutput, type ExportPreset } from "@/lib/media/export-presets";
+import { isFxActive, type AudioFx } from "@/lib/studio/fx";
 import type { Range } from "@/lib/media/edl";
 import { formatDuration } from "@/lib/utils";
 import { useModal } from "@/lib/useModal";
@@ -14,14 +15,22 @@ interface ExportDialogProps {
   editedSeconds: number;
   /** Rendering a selected clip rather than the whole edit. */
   selection?: boolean;
+  /** The Audio tab's effects; rendered into the file when active. */
+  audioFx?: AudioFx | null;
   onClose: () => void;
 }
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 2 : 1)} MB`;
-const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV1", aac: "AAC", opus: "Opus" };
+const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV1", aac: "AAC", opus: "Opus", "pcm-s16": "16-bit PCM" };
+const codecName = (c: string | null) => (c ? CODEC_NAMES[c] ?? c : "");
 
-export default function ExportDialog({ videoUrl, title, segments, editedSeconds, selection = false, onClose }: ExportDialogProps) {
+export default function ExportDialog({
+  videoUrl, title, segments, editedSeconds, selection = false, audioFx = null, onClose,
+}: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>("720p");
+  const [output, setOutput] = useState<ExportOutput>("mp4");
+  const fxAvailable = isFxActive(audioFx);
+  const [withFx, setWithFx] = useState(true);
   const [sourceBytes, setSourceBytes] = useState<number | null>(null);
   const { state, start, reset } = useExporter();
   const busy = state.phase === "preparing" || state.phase === "rendering";
@@ -38,7 +47,8 @@ export default function ExportDialog({ videoUrl, title, segments, editedSeconds,
   // to the button that opened the dialog.
   const dialogRef = useModal<HTMLDivElement>(true, () => { if (!busy) onClose(); });
 
-  const fileName = `${title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "snapcast"}-${selection ? "clip" : "edited"}.mp4`;
+  const doneOutput = state.phase === "done" ? state.output : output;
+  const fileName = `${title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "snapcast"}-${selection ? "clip" : "edited"}.${doneOutput}`;
 
   return (
     <div className="ex-overlay" onClick={() => !busy && onClose()}>
@@ -56,31 +66,55 @@ export default function ExportDialog({ videoUrl, title, segments, editedSeconds,
 
         {state.phase === "idle" || state.phase === "error" ? (
           <>
-            <fieldset className="ex-presets">
-              <legend className="sr-only">Quality preset</legend>
-              {(Object.keys(EXPORT_PRESETS) as ExportPreset[]).map((p) => (
-                <label key={p} className={p === preset ? "ex-preset is-on" : "ex-preset"}>
-                  <input type="radio" name="preset" value={p} checked={p === preset} onChange={() => setPreset(p)} />
-                  <span className="ex-preset-label">{EXPORT_PRESETS[p].label}</span>
-                  <span className="ex-preset-detail">{EXPORT_PRESETS[p].detail}</span>
-                </label>
+            <div className="ex-seg" role="radiogroup" aria-label="Output">
+              {(["mp4", "wav"] as const).map((o) => (
+                <button key={o} type="button" role="radio" aria-checked={output === o} className={output === o ? "is-on" : undefined}
+                  onClick={() => setOutput(o)}>
+                  {o === "mp4" ? "Video (MP4)" : "Audio only (WAV)"}
+                </button>
               ))}
-            </fieldset>
+            </div>
+            {output === "mp4" && (
+              <fieldset className="ex-presets">
+                <legend className="sr-only">Quality preset</legend>
+                {(Object.keys(EXPORT_PRESETS) as ExportPreset[]).map((p) => (
+                  <label key={p} className={p === preset ? "ex-preset is-on" : "ex-preset"}>
+                    <input type="radio" name="preset" value={p} checked={p === preset} onChange={() => setPreset(p)} />
+                    <span className="ex-preset-label">{EXPORT_PRESETS[p].label}</span>
+                    <span className="ex-preset-detail">{EXPORT_PRESETS[p].detail}</span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            <label className={fxAvailable ? "ex-check" : "ex-check is-disabled"}>
+              <input type="checkbox" checked={fxAvailable && withFx} disabled={!fxAvailable} onChange={(e) => setWithFx(e.target.checked)} />
+              <span>
+                Render audio effects
+                <small>{fxAvailable ? "From the Audio tab, at the source's full sample rate, in stereo." : "No audio effects are on. Set them up in the Audio tab."}</small>
+              </span>
+            </label>
             {state.phase === "error" && <p className="ex-error" role="alert">{state.message}</p>}
             <p className="ex-note">
               Encoded with your device&apos;s hardware encoder via WebCodecs. Nothing is uploaded; the original video is untouched.
             </p>
             <footer className="ex-foot">
               <button className="ed-btn" onClick={onClose}>Cancel</button>
-              <button className="ed-btn is-primary" onClick={() => start(videoUrl, segments, preset)}>Render MP4</button>
+              <button
+                className="ed-btn is-primary"
+                onClick={() => start(videoUrl, segments, preset, { output, audioFx: fxAvailable && withFx ? audioFx : null })}
+              >
+                {output === "mp4" ? "Render MP4" : "Render WAV"}
+              </button>
             </footer>
           </>
         ) : state.phase === "done" ? (
           <>
-            <video className="ex-preview" src={state.url} controls playsInline />
+            {state.output === "wav"
+              ? <audio className="ex-preview-audio" src={state.url} controls />
+              : <video className="ex-preview" src={state.url} controls playsInline />}
             <dl className="ex-stats">
               <div><dt>File size</dt><dd>{mb(state.bytes)}</dd></div>
-              {sourceBytes && (
+              {sourceBytes && state.output === "mp4" && (
                 <div>
                   <dt>vs. original</dt>
                   <dd>
@@ -91,13 +125,14 @@ export default function ExportDialog({ videoUrl, title, segments, editedSeconds,
                   </dd>
                 </div>
               )}
-              <div><dt>Resolution</dt><dd>{state.width}×{state.height}</dd></div>
-              <div><dt>Codecs</dt><dd>{CODEC_NAMES[state.videoCodec] ?? state.videoCodec}{state.audioCodec ? ` + ${CODEC_NAMES[state.audioCodec] ?? state.audioCodec}` : ", no audio"}</dd></div>
+              {state.output === "mp4" && <div><dt>Resolution</dt><dd>{state.width}×{state.height}</dd></div>}
+              <div><dt>Codecs</dt><dd>{state.output === "mp4" ? codecName(state.videoCodec) : ""}{state.audioCodec ? `${state.output === "mp4" ? " + " : ""}${codecName(state.audioCodec)}` : ", no audio"}</dd></div>
+              <div><dt>Audio effects</dt><dd>{state.audioProcessed ? "Rendered into the file" : "None (original audio)"}</dd></div>
               <div><dt>Render time</dt><dd>{(state.ms / 1000).toFixed(1)}s ({(state.editedSeconds / (state.ms / 1000)).toFixed(1)}× real time)</dd></div>
             </dl>
             <footer className="ex-foot">
               <button className="ed-btn" onClick={reset}>Render again</button>
-              <a className="ed-btn is-primary" href={state.url} download={fileName}>Download MP4</a>
+              <a className="ed-btn is-primary" href={state.url} download={fileName}>Download {state.output.toUpperCase()}</a>
             </footer>
           </>
         ) : (
@@ -114,7 +149,9 @@ export default function ExportDialog({ videoUrl, title, segments, editedSeconds,
             <p className="ex-progress-label">
               {state.phase === "preparing"
                 ? "Reading the source and negotiating codecs…"
-                : `Rendering ${Math.round(state.fraction * 100)}% · ${state.width}×${state.height} ${CODEC_NAMES[state.videoCodec] ?? state.videoCodec}`}
+                : state.output === "wav"
+                  ? `Rendering audio ${Math.round(state.fraction * 100)}%${state.audioProcessed ? " · with effects" : ""}`
+                  : `Rendering ${Math.round(state.fraction * 100)}% · ${state.width}×${state.height} ${codecName(state.videoCodec)}${state.audioProcessed ? " · audio effects" : ""}`}
             </p>
             <footer className="ex-foot">
               <button className="ed-btn" onClick={reset}>Cancel</button>

@@ -13,6 +13,7 @@ import { sanitizeCuts, sanitizeWords } from "@/lib/media/sanitize";
 import { groupSentences, sentencesToTranscriptEntries, type Word } from "@/lib/media/align";
 import type { Cut } from "@/lib/media/edl";
 import { isPauseLevel, type PauseLevel } from "@/lib/media/pauses";
+import { sanitizeAudioFx, type AudioFx } from "@/lib/studio/fx";
 
 /** Upper bound when the stored duration is unknown: matches LIMITS (24 h). */
 const UNKNOWN_DURATION = 86_400;
@@ -37,6 +38,8 @@ export interface EditorData {
   words: Word[] | null;
   cuts: Cut[];
   pauseLevel: PauseLevel | null;
+  /** Saved Audio Studio settings, validated on the way out too. */
+  audioFx: AudioFx | null;
 }
 
 /** Everything the editor needs, for the owner only. */
@@ -63,6 +66,7 @@ export async function getEditorData(videoId: string): Promise<EditorData | null>
     words: row.words ?? null,
     cuts: row.edl?.cuts ?? [],
     pauseLevel: row.edl?.pauseLevel ?? null,
+    audioFx: row.edl?.audioFx ? sanitizeAudioFx(row.edl.audioFx) : null,
   };
 }
 
@@ -99,19 +103,38 @@ export async function saveWordTranscript(
   return { wordCount: clean.length, sentenceCount: sentences.length };
 }
 
-/** Stores the edit (cut list). The source asset is never touched. */
+/**
+ * Stores the edit: the cut list and the Audio Studio settings. Settings only;
+ * the source asset is never touched and rendered media is never stored.
+ *
+ * `audioFx` is optional: a caller that omits it (an editor page loaded before
+ * this field existed) keeps whatever is stored instead of wiping it. Pass
+ * null to clear it.
+ */
 export async function saveEdit(
   videoId: string,
   cuts: unknown,
-  pauseLevel: unknown
+  pauseLevel: unknown,
+  audioFx?: unknown
 ): Promise<{ cutCount: number }> {
   const { userId, maxDuration } = await requireOwnedVideo(videoId);
   const clean = sanitizeCuts(cuts, maxDuration);
   const level = isPauseLevel(pauseLevel) ? pauseLevel : null;
 
+  let fx: AudioFx | null;
+  if (audioFx === undefined) {
+    const [row] = await db
+      .select({ edl: videos.edl })
+      .from(videos)
+      .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
+    fx = row?.edl?.audioFx ?? null;
+  } else {
+    fx = audioFx === null ? null : sanitizeAudioFx(audioFx);
+  }
+
   await db
     .update(videos)
-    .set({ edl: { version: 1, cuts: clean, pauseLevel: level }, updatedAt: new Date() })
+    .set({ edl: { version: 1, cuts: clean, pauseLevel: level, audioFx: fx }, updatedAt: new Date() })
     .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
 
   revalidatePath(`/video/${videoId}`);

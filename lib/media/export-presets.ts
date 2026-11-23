@@ -4,6 +4,7 @@
 // the page bundle.
 
 import type { Range } from "./edl";
+import type { AudioFx } from "@/lib/studio/fx";
 
 export type ExportPreset = "original" | "1080p" | "720p" | "compact";
 export type ExportQuality = "high" | "medium" | "low";
@@ -18,21 +19,30 @@ export const EXPORT_PRESETS: Record<
   compact: { label: "Compact", detail: "480p, smallest file", maxHeight: 480, quality: "low" },
 };
 
+export type ExportOutput = "mp4" | "wav";
+
 export type ExportRequest = {
   type: "export";
   url: string;
   segments: Range[];
   preset: ExportPreset;
+  /** Audio effects to render into the file; null/inactive copies the audio as is. */
+  audioFx?: AudioFx | null;
+  /** "wav" renders the edited, processed audio alone. Default "mp4". */
+  output?: ExportOutput;
 };
 
 export type ExportEvent =
   | {
       type: "start";
+      output: ExportOutput;
       width: number;
       height: number;
-      videoCodec: string;
+      videoCodec: string | null;
       audioCodec: string | null;
       editedSeconds: number;
+      /** True when audio effects were rendered into the file. */
+      audioProcessed: boolean;
     }
   | { type: "progress"; fraction: number }
   | { type: "done"; buffer: ArrayBuffer; ms: number }

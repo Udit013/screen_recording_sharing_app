@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { saveEdit, saveWordTranscript, type EditorData } from "@/lib/actions/edit";
 import { useAudioAnalysis, type AnalysisState } from "@/lib/media/useAudioAnalysis";
 import { useTranscriber } from "@/lib/media/useTranscriber";
-import { historyReducer } from "@/lib/media/history";
+import { docHistoryReducer, initialDocHistory } from "@/lib/studio/doc";
+import { fadeGainAt, untouchedFx, type AudioFx } from "@/lib/studio/fx";
+import { usePreviewFx } from "@/lib/studio/usePreviewFx";
 import {
   clipSegments, keptSegments, mergeRanges, nextPlayableTime, isInsideCut, roundMs, sourceToEdited, subtractRange, summarizeEdit,
   type Cut, type Range,
@@ -16,6 +18,7 @@ import { formatDuration } from "@/lib/utils";
 import Timeline from "./Timeline";
 import TranscriptPane, { type PauseMarker } from "./TranscriptPane";
 import ExportDialog from "./ExportDialog";
+import AudioStudio from "./AudioStudio";
 
 type Ready = Extract<AnalysisState, { status: "ready" }>;
 type LevelState = PauseLevel | "off" | "custom";
@@ -27,6 +30,24 @@ const MARKER_MIN_PAUSE = 0.7;
 const DEFAULT_PADDING = PAUSE_LEVELS.balanced.padding;
 
 const clock = (t: number) => formatDuration(Math.floor(t)) || "0:00";
+
+/**
+ * In production Next.js replaces Server Action error messages with a long
+ * generic sentence about "Server Components render". Show something a person
+ * can act on instead; keep real messages (e.g. validation) when they arrive.
+ */
+function saveErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "";
+  if (!msg || /Server Components render|digest/i.test(msg)) return "couldn't reach the server.";
+  if (/Unauthenticated/i.test(msg)) return "you're signed out. Sign in again to keep editing.";
+  return msg.length > 120 ? `${msg.slice(0, 117)}…` : msg;
+}
+
+type SideTab = "transcript" | "audio";
+const SIDE_TABS: { id: SideTab; label: string }[] = [
+  { id: "transcript", label: "Transcript" },
+  { id: "audio", label: "Audio" },
+];
 const secs = (t: number) => (t >= 60 ? clock(t) : `${t.toFixed(1)}s`);
 
 /**
@@ -119,13 +140,31 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // ── Edit state ──────────────────────────────────────────────────────────
-  const [history, dispatch] = useReducer(historyReducer, data.cuts, (cuts) => ({ past: [], present: cuts, future: [] }));
-  const cuts = history.present;
+  // One undoable document: the cut list and the Audio Studio settings.
+  const initialFx = useMemo(() => data.audioFx ?? untouchedFx(), [data.audioFx]);
+  const [history, dispatch] = useReducer(docHistoryReducer, { cuts: data.cuts, fx: initialFx }, initialDocHistory);
+  const cuts = history.present.cuts;
+  const fx = history.present.fx;
+  const presentRef = useRef(history.present);
+  useEffect(() => { presentRef.current = history.present; });
   const merged = useMemo(() => mergeRanges(cuts, duration), [cuts, duration]);
   const kept = useMemo(() => keptSegments(merged, duration), [merged, duration]);
   const summary = useMemo(() => summarizeEdit(merged, duration), [merged, duration]);
   const level = useMemo(() => levelOf(cuts, silences), [cuts, silences]);
-  const commit = useCallback((next: Cut[]) => dispatch({ type: "commit", cuts: next }), []);
+  const commit = useCallback(
+    (next: Cut[]) => dispatch({ type: "commit", value: { ...presentRef.current, cuts: next } }),
+    []
+  );
+  const setFx = useCallback(
+    (next: AudioFx, mergeKey?: string) =>
+      dispatch({
+        type: "commit",
+        value: { ...presentRef.current, fx: next },
+        mergeKey: mergeKey ? `fx:${mergeKey}` : undefined,
+        at: performance.now(),
+      }),
+    []
+  );
 
   // Seconds each level would remove on top of the manual cuts: measured on the
   // real edit, so the numbers on the buttons are exactly what you'd get.
@@ -200,13 +239,24 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     [cuts, level, commit]
   );
 
+  // ── Audio preview (effects run live in an AudioWorklet) ────────────────
+  const [bypass, setBypass] = useState(false);
+  const preview = usePreviewFx(videoRef, fx, bypass);
+  const fxRef = useRef(fx);
+  useEffect(() => { fxRef.current = fx; }, [fx]);
+
   // ── Playback ────────────────────────────────────────────────────────────
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [mode, setMode] = useState<"edited" | "original">("edited");
   const mergedRef = useRef(merged);
   const modeRef = useRef(mode);
-  useEffect(() => { mergedRef.current = merged; modeRef.current = mode; }, [merged, mode]);
+  const editedDurationRef = useRef(summary.editedDuration);
+  useEffect(() => {
+    mergedRef.current = merged;
+    modeRef.current = mode;
+    editedDurationRef.current = summary.editedDuration;
+  }, [merged, mode, summary.editedDuration]);
 
   // Cuts are skipped in real time, so the preview is the edit without any
   // rendering. rAF rather than timeupdate: timeupdate fires every ~250 ms,
@@ -225,7 +275,17 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
       }
     }
     setCurrentTime(t);
-  }, [duration]);
+    // Fades follow the edited timeline, exactly as the export renders them.
+    const f = fxRef.current;
+    if (f.enabled && (f.fadeInMs > 0 || f.fadeOutMs > 0)) {
+      const edited = modeRef.current === "edited";
+      const at = edited ? sourceToEdited(t, mergedRef.current) : t;
+      const total = edited ? editedDurationRef.current : duration;
+      preview.setFadeGain(fadeGainAt(at, total, f.fadeInMs, f.fadeOutMs));
+    } else {
+      preview.setFadeGain(1);
+    }
+  }, [duration, preview]);
 
   useEffect(() => {
     if (!playing) return;
@@ -243,7 +303,9 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     if (!v) return;
     v.currentTime = t;
     setCurrentTime(t);
-  }, []);
+    // A manual jump starts fresh; reverb/echo tails from elsewhere would be wrong.
+    preview.resetTails();
+  }, [preview]);
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
@@ -254,8 +316,9 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     if (modeRef.current === "edited") t = nextPlayableTime(t, mergedRef.current);
     if (t >= duration - 0.05) return; // everything after this point is cut
     if (t !== v.currentTime) v.currentTime = t;
-    v.play().catch(() => {});
-  }, [duration]);
+    // The first play builds the audio graph (it needs this user gesture).
+    void preview.start().finally(() => v.play().catch(() => {}));
+  }, [duration, preview]);
 
   const activeIndex = useMemo(() => {
     let lo = 0, hi = shownWords.length - 1, found = -1;
@@ -325,13 +388,13 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const [save, setSave] = useState<{ status: "saved" | "saving" | "error"; message?: string }>({ status: "saved" });
   const [retryTick, setRetryTick] = useState(0);
   const saveLevel = level === "off" || level === "custom" ? null : level;
-  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel]));
+  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel, initialFx]));
   const seqRef = useRef(0);
   const inFlightRef = useRef(0);
 
   // The edit waiting for the debounce. Kept in a ref so leaving the editor
   // through an in-app link (which beforeunload never sees) can still send it.
-  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null } | null>(null);
+  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null; fx: AudioFx } | null>(null);
 
   const sendPending = useCallback(() => {
     const p = pendingRef.current;
@@ -340,18 +403,18 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     sentKeyRef.current = p.key;
     const seq = ++seqRef.current;
     inFlightRef.current++;
-    saveEdit(data.videoId, p.cuts, p.level)
+    saveEdit(data.videoId, p.cuts, p.level, p.fx)
       .then(() => { if (seq === seqRef.current) setSave({ status: "saved" }); })
       .catch((err) => {
         if (seq !== seqRef.current) return;
         sentKeyRef.current = null;
-        setSave({ status: "error", message: err instanceof Error ? err.message : "Save failed" });
+        setSave({ status: "error", message: saveErrorMessage(err) });
       })
       .finally(() => { inFlightRef.current--; });
   }, [data.videoId]);
 
   useEffect(() => {
-    const key = JSON.stringify([cuts, saveLevel]);
+    const key = JSON.stringify([cuts, saveLevel, fx]);
     if (key === sentKeyRef.current) {
       // e.g. an edit undone before it was sent: nothing new to store.
       pendingRef.current = null;
@@ -359,10 +422,10 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
       return;
     }
     setSave({ status: "saving" });
-    pendingRef.current = { key, cuts, level: saveLevel };
+    pendingRef.current = { key, cuts, level: saveLevel, fx };
     const timer = setTimeout(sendPending, 700);
     return () => clearTimeout(timer);
-  }, [cuts, saveLevel, retryTick, sendPending]);
+  }, [cuts, saveLevel, fx, retryTick, sendPending]);
 
   // Unmount (navigating away inside the app): send what the debounce held.
   useEffect(() => () => sendPending(), [sendPending]);
@@ -398,6 +461,9 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     copy.then(() => setClipLink({ url, copied: true })).catch(() => setClipLink({ url, copied: false }));
   }, [selRange, data.videoId]);
 
+  // ── Side panel ──────────────────────────────────────────────────────────
+  const [sideTab, setSideTab] = useState<SideTab>("transcript");
+
   // ── Shortcut sheet ──────────────────────────────────────────────────────
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -426,6 +492,9 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
         e.preventDefault();
         if (k.selFullyCut) k.restoreSelection();
         else k.cutSelection();
+      } else if ((e.key === "b" || e.key === "B") && !mod) {
+        e.preventDefault();
+        setBypass((b) => !b);
       } else if (e.key === "?") {
         e.preventDefault();
         setHelpOpen((o) => !o);
@@ -490,6 +559,9 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
               // would compete with the analysis-audio download for bandwidth.
               // Playback buffers on demand.
               preload="metadata"
+              // Required to route a cross-origin video's audio into Web Audio
+              // (otherwise the graph outputs silence). Cloudinary sends CORS.
+              crossOrigin="anonymous"
               playsInline
               onClick={togglePlay}
               onPlay={() => setPlaying(true)}
@@ -558,110 +630,152 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
           </div>
 
           <p className="ed-fine ed-live-note">
-            Edits apply to your video page and share link as soon as they&apos;re saved. The original upload is never
-            modified, and every cut can be restored.
+            Cuts apply to your video page and share link as soon as they&apos;re saved. Audio effects are previewed
+            here and rendered into exports. The original upload is never modified, and everything can be undone.
           </p>
         </section>
 
-        <section className="ed-script" aria-label="Transcript">
-          <div className="ed-script-head">
-            {selRange ? (
-              <div className="ed-selbar">
-                <span>
-                  {selWordCount > 0 ? `${selWordCount} ${selWordCount === 1 ? "word" : "words"}` : "Range"} ·{" "}
-                  {secs(selRange.end - selRange.start)}
-                </span>
-                {selFullyCut ? (
-                  <button className="ed-btn is-small" onClick={restoreSelection}>Restore <kbd>⌫</kbd></button>
-                ) : (
-                  <>
-                    <button className="ed-btn is-small is-danger" onClick={cutSelection}>Cut <kbd>⌫</kbd></button>
-                    <button className="ed-btn is-small" onClick={restoreSelection}>Restore</button>
-                  </>
-                )}
-                {selectionKept.length > 0 && (
-                  <>
-                    <span className="ed-selbar-sep" aria-hidden />
-                    <button className="ed-btn is-small" onClick={copyClipLink} title="Link that plays just this part">
-                      {clipLink?.copied ? "Link copied" : "Copy clip link"}
-                    </button>
-                    <button className="ed-btn is-small" onClick={() => openExport(selectionKept, true)}>Export clip</button>
-                  </>
-                )}
-                <button className="ed-link" onClick={clearSelection}>Clear</button>
-                {clipLink && !clipLink.copied && (
-                  <input
-                    className="ed-clip-url"
-                    readOnly
-                    value={clipLink.url}
-                    aria-label="Clip link (copy it manually)"
-                    autoFocus
-                    onFocus={(e) => e.currentTarget.select()}
-                  />
-                )}
-              </div>
-            ) : (
-              <p className="ed-hint">
-                {shownWords.length
-                  ? "Select words, then press ⌫ to cut them. Shift-click extends a selection."
-                  : "Drag across the timeline to select a range, then press ⌫ to cut it."}
-              </p>
-            )}
-            {words && !transcribing && (
-              <button className="ed-link" onClick={() => transcriber.start(audio, silences)}>Re-transcribe</button>
-            )}
+        <section className="ed-script ed-side" aria-label="Editing tools">
+          <div className="ed-tabs" role="tablist" aria-label="Editing tools">
+            {SIDE_TABS.map((t) => (
+              <button
+                key={t.id}
+                id={`ed-tab-${t.id}`}
+                type="button"
+                role="tab"
+                aria-selected={sideTab === t.id}
+                aria-controls={`ed-panel-${t.id}`}
+                tabIndex={sideTab === t.id ? 0 : -1}
+                className={sideTab === t.id ? "is-on" : undefined}
+                onClick={() => setSideTab(t.id)}
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+                  e.preventDefault();
+                  const i = SIDE_TABS.findIndex((x) => x.id === sideTab);
+                  const next = SIDE_TABS[(i + (e.key === "ArrowRight" ? 1 : SIDE_TABS.length - 1)) % SIDE_TABS.length].id;
+                  setSideTab(next);
+                  document.getElementById(`ed-tab-${next}`)?.focus();
+                }}
+              >
+                {t.label}
+                {t.id === "audio" && fx.enabled && !bypass && <span className="ed-tab-dot" aria-label="(effects on)" />}
+              </button>
+            ))}
           </div>
 
-          {tState.phase === "model" && (
-            <Progress
-              label="Downloading the speech model (cached after the first time)"
-              fraction={tState.total ? tState.loaded / tState.total : null}
-              detail={tState.total ? `${(tState.loaded / 1048576).toFixed(1)} / ${(tState.total / 1048576).toFixed(1)} MB` : undefined}
-              onCancel={transcriber.cancel}
-            />
-          )}
-          {tState.phase === "transcribing" && (
-            <Progress
-              label="Transcribing on this device"
-              fraction={tState.done / tState.total}
-              detail={`${tState.done} / ${tState.total} sections · ${tState.words.length} words`}
-              onCancel={transcriber.cancel}
-            />
-          )}
-          {tState.phase === "error" && (
-            <div className="ed-callout is-error" role="alert">
-              <p>Transcription failed: {tState.message}</p>
-              <button className="ed-btn is-small" onClick={() => transcriber.start(audio, silences)}>Try again</button>
-            </div>
-          )}
-          {wordsNote && tState.phase === "done" && <p className="ed-callout">{wordsNote}</p>}
-
-          {shownWords.length > 0 ? (
-            <TranscriptPane
-              words={shownWords}
-              sentences={sentences}
-              cutMask={cutMask}
-              activeIndex={activeIndex}
-              selection={wordSel}
-              pauses={pauseMarkers}
-              onWordDown={onWordDown}
-              onWordEnter={onWordEnter}
-              onPauseClick={togglePause}
-            />
-          ) : (
-            !transcribing && tState.phase !== "error" && (
-              <div className="ed-empty">
-                <h2>Edit by editing text</h2>
-                <p>
-                  Get a word-level transcript, then cut a sentence by deleting it. Speech recognition (Whisper) runs
-                  entirely in your browser: your audio never leaves this device and it costs nothing.
+          {sideTab === "transcript" ? (
+          <div className="ed-tabpanel" role="tabpanel" id="ed-panel-transcript" aria-labelledby="ed-tab-transcript">
+            <div className="ed-script-head">
+              {selRange ? (
+                <div className="ed-selbar">
+                  <span>
+                    {selWordCount > 0 ? `${selWordCount} ${selWordCount === 1 ? "word" : "words"}` : "Range"} ·{" "}
+                    {secs(selRange.end - selRange.start)}
+                  </span>
+                  {selFullyCut ? (
+                    <button className="ed-btn is-small" onClick={restoreSelection}>Restore <kbd>⌫</kbd></button>
+                  ) : (
+                    <>
+                      <button className="ed-btn is-small is-danger" onClick={cutSelection}>Cut <kbd>⌫</kbd></button>
+                      <button className="ed-btn is-small" onClick={restoreSelection}>Restore</button>
+                    </>
+                  )}
+                  {selectionKept.length > 0 && (
+                    <>
+                      <span className="ed-selbar-sep" aria-hidden />
+                      <button className="ed-btn is-small" onClick={copyClipLink} title="Link that plays just this part">
+                        {clipLink?.copied ? "Link copied" : "Copy clip link"}
+                      </button>
+                      <button className="ed-btn is-small" onClick={() => openExport(selectionKept, true)}>Export clip</button>
+                    </>
+                  )}
+                  <button className="ed-link" onClick={clearSelection}>Clear</button>
+                  {clipLink && !clipLink.copied && (
+                    <input
+                      className="ed-clip-url"
+                      readOnly
+                      value={clipLink.url}
+                      aria-label="Clip link (copy it manually)"
+                      autoFocus
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                  )}
+                </div>
+              ) : (
+                <p className="ed-hint">
+                  {shownWords.length
+                    ? "Select words, then press ⌫ to cut them. Shift-click extends a selection."
+                    : "Drag across the timeline to select a range, then press ⌫ to cut it."}
                 </p>
-                <button className="ed-btn is-primary" onClick={() => transcriber.start(audio, silences)}>
-                  Transcribe {clock(duration)} of audio
-                </button>
-                <p className="ed-fine">One-time model download, then cached by your browser.</p>
+              )}
+              {words && !transcribing && (
+                <button className="ed-link" onClick={() => transcriber.start(audio, silences)}>Re-transcribe</button>
+              )}
+            </div>
+
+            {tState.phase === "model" && (
+              <Progress
+                label="Downloading the speech model (cached after the first time)"
+                fraction={tState.total ? tState.loaded / tState.total : null}
+                detail={tState.total ? `${(tState.loaded / 1048576).toFixed(1)} / ${(tState.total / 1048576).toFixed(1)} MB` : undefined}
+                onCancel={transcriber.cancel}
+              />
+            )}
+            {tState.phase === "transcribing" && (
+              <Progress
+                label="Transcribing on this device"
+                fraction={tState.done / tState.total}
+                detail={`${tState.done} / ${tState.total} sections · ${tState.words.length} words`}
+                onCancel={transcriber.cancel}
+              />
+            )}
+            {tState.phase === "error" && (
+              <div className="ed-callout is-error" role="alert">
+                <p>Transcription failed: {tState.message}</p>
+                <button className="ed-btn is-small" onClick={() => transcriber.start(audio, silences)}>Try again</button>
               </div>
-            )
+            )}
+            {wordsNote && tState.phase === "done" && <p className="ed-callout">{wordsNote}</p>}
+
+            {shownWords.length > 0 ? (
+              <TranscriptPane
+                words={shownWords}
+                sentences={sentences}
+                cutMask={cutMask}
+                activeIndex={activeIndex}
+                selection={wordSel}
+                pauses={pauseMarkers}
+                onWordDown={onWordDown}
+                onWordEnter={onWordEnter}
+                onPauseClick={togglePause}
+              />
+            ) : (
+              !transcribing && tState.phase !== "error" && (
+                <div className="ed-empty">
+                  <h2>Edit by editing text</h2>
+                  <p>
+                    Get a word-level transcript, then cut a sentence by deleting it. Speech recognition (Whisper) runs
+                    entirely in your browser: your audio never leaves this device and it costs nothing.
+                  </p>
+                  <button className="ed-btn is-primary" onClick={() => transcriber.start(audio, silences)}>
+                    Transcribe {clock(duration)} of audio
+                  </button>
+                  <p className="ed-fine">One-time model download, then cached by your browser.</p>
+                </div>
+              )
+            )}
+          </div>
+          ) : (
+          <div className="ed-tabpanel is-scroll" role="tabpanel" id="ed-panel-audio" aria-labelledby="ed-tab-audio">
+            <AudioStudio
+              fx={fx}
+              onChange={setFx}
+              bypass={bypass}
+              onBypassChange={setBypass}
+              previewStatus={preview.status}
+              meterRef={preview.meterRef}
+            />
+          </div>
           )}
         </section>
       </div>
@@ -692,6 +806,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
           segments={exportJob.segments}
           selection={exportJob.selection}
           editedSeconds={exportJob.segments.reduce((s, r) => s + (r.end - r.start), 0)}
+          audioFx={fx}
           onClose={() => setExportJob(null)}
         />
       )}
@@ -709,7 +824,8 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
               ["Shift-click", "Extend a word selection"],
               ["Drag", "Select words, or a range on the timeline"],
               ["← →", "Step 1 s (timeline focused)"],
-              ["⌘Z  ⇧⌘Z", "Undo / redo"],
+              ["⌘Z  ⇧⌘Z", "Undo / redo (cuts and audio settings)"],
+              ["B", "Compare: original audio / with effects"],
               ["Esc", "Clear the selection"],
               ["?", "Show or hide this list"],
             ].map(([k, v]) => (

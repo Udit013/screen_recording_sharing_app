@@ -11,12 +11,18 @@ import {
 import type { Word } from "@/lib/media/align";
 import type { Cut } from "@/lib/media/edl";
 import type { PauseLevel } from "@/lib/media/pauses";
+import type { AudioFx } from "@/lib/studio/fx";
 
 export interface StoredEdl {
   version: 1;
   cuts: Cut[];
   /** Level that generated the "silence" cuts, or null when pauses are kept. */
   pauseLevel: PauseLevel | null;
+  /**
+   * Audio Studio settings (optional, so every edit saved before they existed
+   * still loads). Settings only: rendered audio is never stored.
+   */
+  audioFx?: AudioFx | null;
 }
 
 export const user = pgTable("user", {
