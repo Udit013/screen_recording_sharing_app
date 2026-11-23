@@ -31,4 +31,4 @@ jobs:
         env:
           # Lazy service initialization means the build needs no real secrets;
           # only the public base URL is read at build time (metadataBase).
-          NEXT_PUBLIC_BASE_URL: https://snapcast-video-sharing.vercel.app
+          NEXT_PUBLIC_BASE_URL: https://snapcast-studio.vercel.app

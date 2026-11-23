@@ -3,13 +3,13 @@
 > A screen recorder with a one-take editor for developer demos, PR walkthroughs and bug repros. Record without rehearsing, then fix the take like a doc: delete words from the transcript, tighten every pause, export an MP4 or share the edit as a link. Speech recognition, audio analysis and video encoding all run in the browser, so editing costs nothing to operate. Built with Next.js 15, Neon PostgreSQL, Cloudinary, Whisper (transformers.js), WebCodecs and Gemini 2.0 Flash.
 
 [![CI](https://github.com/Udit013/screen_recording_sharing_app/actions/workflows/ci.yml/badge.svg)](https://github.com/Udit013/screen_recording_sharing_app/actions/workflows/ci.yml)
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?logo=vercel)](https://snapcast-video-sharing.vercel.app)
+[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?logo=vercel)](https://snapcast-studio.vercel.app)
 [![Next.js 15](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://typescriptlang.org)
 
 ## Live Demo
 
-**[→ snapcast-video-sharing.vercel.app](https://snapcast-video-sharing.vercel.app)**
+**[→ snapcast-studio.vercel.app](https://snapcast-studio.vercel.app)**
 
 ---
 
