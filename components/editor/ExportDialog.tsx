@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useExporter } from "@/lib/media/useExporter";
 import { EXPORT_PRESETS, type ExportOutput, type ExportPreset } from "@/lib/media/export-presets";
+import { AUDIO_BITRATES, AUDIO_FORMATS, DEFAULT_AUDIO_KBPS, estimateAudioBytes, formatBytes, maxKbps, type AudioFormatId } from "@/lib/media/audioFormats";
 import { isFxActive, type AudioFx } from "@/lib/studio/fx";
 import { captionsForSegments, type Caption, type CaptionStyle } from "@/lib/studio/captions";
 import { isIdentityLook, type VideoLook } from "@/lib/studio/frame";
@@ -32,7 +33,7 @@ interface ExportDialogProps {
 }
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 2 : 1)} MB`;
-const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV1", aac: "AAC", opus: "Opus", "pcm-s16": "16-bit PCM" };
+const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV1", aac: "AAC", opus: "Opus", mp3: "MP3", "pcm-s16": "16-bit PCM" };
 const codecName = (c: string | null) => (c ? CODEC_NAMES[c] ?? c : "");
 
 export default function ExportDialog({
@@ -64,7 +65,11 @@ export default function ExportDialog({
   const dialogRef = useModal<HTMLDivElement>(true, () => { if (!busy) onClose(); });
 
   const doneOutput = state.phase === "done" ? state.output : output;
-  const fileName = `${title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "snapcast"}-${selection ? "clip" : "edited"}.${doneOutput}`;
+  const ext = doneOutput === "mp4" ? "mp4" : AUDIO_FORMATS[doneOutput].ext;
+  const fileName = `${title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "snapcast"}-${selection ? "clip" : "edited"}.${ext}`;
+  const [audioFormat, setAudioFormat] = useState<AudioFormatId>(intent === "extract" ? "wav" : "mp3");
+  const [audioKbps, setAudioKbps] = useState<number>(DEFAULT_AUDIO_KBPS);
+  const outLabel = output === "mp4" ? "MP4" : AUDIO_FORMATS[output].label;
 
   return (
     <div className="ex-overlay" onClick={() => !busy && onClose()}>
@@ -83,13 +88,35 @@ export default function ExportDialog({
         {state.phase === "idle" || state.phase === "error" ? (
           <>
             <div className="ex-seg" role="radiogroup" aria-label="Output">
-              {(["mp4", "wav"] as const).map((o) => (
-                <button key={o} type="button" role="radio" aria-checked={output === o} className={output === o ? "is-on" : undefined}
-                  onClick={() => setOutput(o)}>
-                  {o === "mp4" ? "Video (MP4)" : "Audio only (WAV)"}
+              {(["video", "audio"] as const).map((o) => (
+                <button key={o} type="button" role="radio" aria-checked={(output === "mp4") === (o === "video")}
+                  className={(output === "mp4") === (o === "video") ? "is-on" : undefined}
+                  onClick={() => setOutput(o === "video" ? "mp4" : audioFormat)}>
+                  {o === "video" ? "Video (MP4)" : "Audio only"}
                 </button>
               ))}
             </div>
+            {output !== "mp4" && (
+              <div className="ex-audio-opts">
+                <label>
+                  <span>Format</span>
+                  <select value={output} onChange={(e) => { const f = e.target.value as AudioFormatId; setAudioFormat(f); setOutput(f); }}>
+                    {(Object.keys(AUDIO_FORMATS) as AudioFormatId[]).map((f) => (
+                      <option key={f} value={f}>{AUDIO_FORMATS[f].label} · {AUDIO_FORMATS[f].detail}</option>
+                    ))}
+                  </select>
+                </label>
+                {output !== "wav" && (
+                  <label>
+                    <span>Bitrate</span>
+                    <select value={Math.min(audioKbps, maxKbps(output))} onChange={(e) => setAudioKbps(Number(e.target.value))}>
+                      {AUDIO_BITRATES.filter((b) => b <= maxKbps(output)).map((b) => <option key={b} value={b}>{b} kbps</option>)}
+                    </select>
+                  </label>
+                )}
+                <small>Estimated size: {formatBytes(estimateAudioBytes(output, Math.min(audioKbps, maxKbps(output)), editedSeconds))}</small>
+              </div>
+            )}
             {output === "mp4" && (
               <fieldset className="ex-presets">
                 <legend className="sr-only">Quality preset</legend>
@@ -144,19 +171,20 @@ export default function ExportDialog({
                 className="ed-btn is-primary"
                 onClick={() => start(videoUrl, segments, preset, {
                   output,
+                  audioKbps: output === "mp4" ? undefined : Math.min(audioKbps, maxKbps(output)),
                   audioFx: fxAvailable && withFx ? audioFx : null,
                   captions: output === "mp4" && captionCount > 0 && withCaptions ? captions : null,
                   look: output === "mp4" && look && !isIdentityLook(look) ? look : null,
                   mix: mixAvailable && withMix ? mix : null,
                 })}
               >
-                {output === "mp4" ? "Render MP4" : "Render WAV"}
+                {`Render ${outLabel}`}
               </button>
             </footer>
           </>
         ) : state.phase === "done" ? (
           <>
-            {state.output === "wav"
+            {state.output !== "mp4"
               ? <audio className="ex-preview-audio" src={state.url} controls />
               : <video className="ex-preview" src={state.url} controls playsInline />}
             <dl className="ex-stats">
@@ -181,7 +209,7 @@ export default function ExportDialog({
             </dl>
             <footer className="ex-foot">
               <button className="ed-btn" onClick={reset}>Render again</button>
-              <a className="ed-btn is-primary" href={state.url} download={fileName}>Download {state.output.toUpperCase()}</a>
+              <a className="ed-btn is-primary" href={state.url} download={fileName}>Download {state.output === "mp4" ? "MP4" : AUDIO_FORMATS[state.output].label}</a>
             </footer>
           </>
         ) : (
@@ -198,7 +226,7 @@ export default function ExportDialog({
             <p className="ex-progress-label">
               {state.phase === "preparing"
                 ? "Reading the source and negotiating codecs…"
-                : state.output === "wav"
+                : state.output !== "mp4"
                   ? `Rendering audio ${Math.round(state.fraction * 100)}%${state.audioProcessed ? " · with effects" : ""}`
                   : `Rendering ${Math.round(state.fraction * 100)}% · ${state.width}×${state.height} ${codecName(state.videoCodec)}${state.audioProcessed ? " · audio effects" : ""}`}
             </p>

@@ -12,6 +12,7 @@ const ICONS = {
   library: "M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z",
   mine: "M15 10l5-3v10l-5-3M4 7h11v10H4z",
   collections: "M4 6h16M4 12h16M4 18h10",
+  convert: "M4 7h13l-3-3M20 17H7l3 3",
 };
 
 const Navbar = () => {
@@ -44,6 +45,7 @@ const Navbar = () => {
           active: pathname === `/profile/${user.id}`,
         },
         { href: "/playlists", label: "Collections", icon: ICONS.collections, active: pathname.startsWith("/playlists") },
+        { href: "/convert", label: "Convert", icon: ICONS.convert, active: pathname.startsWith("/convert") },
       ]
     : [];
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Range } from "./edl";
 import type { ExportEvent, ExportOutput, ExportPreset, ExportRequest } from "./export-presets";
+import { AUDIO_FORMATS } from "./audioFormats";
 import type { AudioFx } from "@/lib/studio/fx";
 
 type StartInfo = Omit<Extract<ExportEvent, { type: "start" }>, "type">;
@@ -17,6 +18,8 @@ export type ExporterState =
 export interface ExportOptions {
   audioFx?: AudioFx | null;
   output?: ExportOutput;
+  /** Bitrate for lossy audio-only outputs, kbps. */
+  audioKbps?: number;
   captions?: ExportRequest["captions"];
   look?: ExportRequest["look"];
   mix?: ExportRequest["mix"];
@@ -59,7 +62,7 @@ export function useExporter() {
       } else if (m.type === "progress" && info) {
         setState({ phase: "rendering", fraction: m.fraction, ...info });
       } else if (m.type === "done" && info) {
-        const blob = new Blob([m.buffer], { type: info.output === "wav" ? "audio/wav" : "video/mp4" });
+        const blob = new Blob([m.buffer], { type: info.output === "mp4" ? "video/mp4" : AUDIO_FORMATS[info.output].mime });
         urlRef.current = URL.createObjectURL(blob);
         setState({ phase: "done", url: urlRef.current, bytes: blob.size, ms: m.ms, ...info });
         worker.terminate();
@@ -81,6 +84,7 @@ export function useExporter() {
       preset,
       audioFx: options.audioFx ?? null,
       output: options.output ?? "mp4",
+      audioKbps: options.audioKbps,
       captions: options.captions ?? null,
       look: options.look ?? null,
       mix: options.mix ?? null,

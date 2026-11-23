@@ -35,7 +35,9 @@ import {
 import type { Range } from "./edl";
 import { createAudioEngine } from "@/lib/studio/dsp";
 import { defaultFx, fadeGainAt, isFxActive, type AudioFx } from "@/lib/studio/fx";
-import { WavWriter } from "@/lib/studio/wav";
+import { encodeAudioFile, measureAacDelay } from "./audioEncoder";
+import { mp3StartTrim, readHead } from "./gapless";
+import { AUDIO_FORMATS, DEFAULT_AUDIO_KBPS } from "./audioFormats";
 import { captionAt, captionsForSegments, sanitizeCaptionStyle, type Caption, type CaptionStyle } from "@/lib/studio/captions";
 import { drawCaption, loadCaptionFont } from "@/lib/studio/captionRender";
 import { drawFrame, isIdentityLook, outputSize, sanitizeLook, type VideoLook } from "@/lib/studio/frame";
@@ -180,14 +182,16 @@ async function decodeClips(mix: AudioMix, editedSeconds: number, onProgress: (do
       const track = await input.getPrimaryAudioTrack();
       if (!track || !(await track.canDecode())) throw new Error("unsupported audio");
       const sr = await track.getSampleRate();
+      // MP3: the decoder's output starts with encoder + decoder delay (gapless.ts).
+      const skip = track.codec === "mp3" ? (mp3StartTrim(await readHead(c.url)) ?? 0) / sr : 0;
       const from = c.in;
       const to = Math.min(c.out, c.in + (editedSeconds - c.start)) + 0.05;
       const frames = Math.ceil((to - from) * sr) + 2;
       const left = new Float32Array(frames), right = new Float32Array(frames);
       const sink = new AudioSampleSink(track);
-      for await (const sample of sink.samples(Math.max(0, from - 0.05), to)) {
+      for await (const sample of sink.samples(Math.max(0, from + skip - 0.05), to + skip)) {
         const [l, r] = stereoPlanes(sample);
-        const off = Math.round((sample.timestamp - from) * sr);
+        const off = Math.round((sample.timestamp - skip - from) * sr);
         sample.close();
         for (let i = 0; i < l.length; i++) {
           const k = off + i;
@@ -277,67 +281,6 @@ async function peakOf(render: (emit: (c: AudioChunk) => Promise<void>) => Promis
 
 const countClips = (m: AudioMix) => m.tracks.filter((t) => !t.muted).reduce((n, t) => n + t.clips.length, 0);
 
-/**
- * AAC encoders prepend "priming" samples (measured here: 2112 frames, 44 ms
- * at 48 kHz; other platforms' encoders use different amounts). Without an
- * edit list telling players to skip them, every exported MP4 played its
- * audio that much late. mediabunny writes an edit list whenever a track starts
- * at a negative timestamp, so audio is labelled `delay` seconds early.
- *
- * The delay is measured, not assumed: a click is encoded and decoded through
- * the same WebCodecs encoder and the decoded click's position gives the delay.
- * Opus carries its own pre-skip in its header, so it needs nothing. Returns
- * frames (0 if it can't be measured, which keeps the old behaviour).
- */
-async function measureAacDelay(sampleRate: number, channels: number): Promise<number> {
-  if (typeof AudioEncoder === "undefined" || typeof AudioDecoder === "undefined") return 0;
-  try {
-    const codec = "mp4a.40.2";
-    const chunks: EncodedAudioChunk[] = [];
-    let description: AllowSharedBufferSource | undefined;
-    const encoder = new AudioEncoder({
-      output: (chunk, meta) => {
-        chunks.push(chunk);
-        if (meta?.decoderConfig?.description) description = meta.decoderConfig.description;
-      },
-      error: () => {},
-    });
-    encoder.configure({ codec, sampleRate, numberOfChannels: channels, bitrate: 128_000 });
-    const frames = Math.round(sampleRate * 0.3);
-    const at = Math.round(sampleRate * 0.1);
-    const data = new Float32Array(frames * channels);
-    for (let c = 0; c < channels; c++) data[c * frames + at] = 0.9;
-    encoder.encode(new AudioData({ format: "f32-planar", sampleRate, numberOfFrames: frames, numberOfChannels: channels, timestamp: 0, data }));
-    await encoder.flush();
-    encoder.close();
-
-    const decoded: Float32Array[] = [];
-    const decoder = new AudioDecoder({
-      output: (d) => {
-        const plane = new Float32Array(d.numberOfFrames);
-        d.copyTo(plane, { planeIndex: 0, format: "f32-planar" });
-        decoded.push(plane);
-        d.close();
-      },
-      error: () => {},
-    });
-    decoder.configure({ codec, sampleRate, numberOfChannels: channels, description });
-    for (const c of chunks) decoder.decode(c);
-    await decoder.flush();
-    decoder.close();
-
-    let index = 0, best = 0, pos = 0;
-    for (const plane of decoded) {
-      for (let i = 0; i < plane.length; i++, pos++) {
-        if (Math.abs(plane[i]) > best) { best = Math.abs(plane[i]); index = pos; }
-      }
-    }
-    const delay = index - at;
-    return best > 0.1 && delay > 0 && delay < sampleRate * 0.2 ? delay : 0;
-  } catch {
-    return 0;
-  }
-}
 
 /**
  * Longest a composited frame may be held. Screen recordings are often
@@ -353,7 +296,7 @@ const normalizeGain = (peak: number, targetDb: number) =>
 self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
   if (msg.data.type !== "export") return;
   const { url, segments, preset } = msg.data;
-  const outputKind: "mp4" | "wav" = msg.data.output ?? "mp4";
+  const outputKind = msg.data.output ?? "mp4";
   const fx = msg.data.audioFx && isFxActive(msg.data.audioFx) ? msg.data.audioFx : null;
   // Multitrack: anything beyond "the original audio, untouched" goes through the mixer.
   const mix: AudioMix | null = msg.data.mix && !isPlainMix(msg.data.mix) ? msg.data.mix : null;
@@ -364,12 +307,12 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     const input = new Input({ formats: ALL_FORMATS, source: new UrlSource(url, { getRetryDelay: retryDelay }) });
     const editedSecondsAll = segments.reduce((s, r) => s + (r.end - r.start), 0);
 
-    if (outputKind === "wav") {
+    if (outputKind !== "mp4") {
       const srcAudio = await input.getPrimaryAudioTrack();
       if (srcAudio && !(await srcAudio.canDecode())) throw new Error("This browser can't decode the source audio codec.");
       if (!srcAudio && !mix) throw new Error("This video has no audio track to export.");
       const aTrack = srcAudio;
-      post({ type: "start", output: outputKind, width: 0, height: 0, videoCodec: null, audioCodec: "pcm-s16", editedSeconds: editedSecondsAll, audioProcessed: !!fx, captionsBurned: 0, tracksMixed: mix ? countClips(mix) : 0 });
+      post({ type: "start", output: outputKind, width: 0, height: 0, videoCodec: null, audioCodec: outputKind === "wav" ? "pcm-s16" : AUDIO_FORMATS[outputKind].codec, editedSeconds: editedSecondsAll, audioProcessed: !!fx, captionsBurned: 0, tracksMixed: mix ? countClips(mix) : 0 });
       const decoded = mix ? await decodeClips(mix, editedSecondsAll, () => {}) : null;
       const render = (g: number, emit: (c: AudioChunk) => Promise<void>) =>
         mix ? renderFinalAudio(aTrack, segments, fx, editedSecondsAll, mix, decoded!, g, emit)
@@ -377,19 +320,19 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
       const gain = fx?.normalize.enabled
         ? normalizeGain(await peakOf((emit) => render(1, emit)), fx.normalize.targetDb)
         : 1;
-      let wav: WavWriter | null = null;
       let lastReport = 0;
-      await render(gain, async (c) => {
-        wav ??= new WavWriter(c.sampleRate, 2);
-        wav.push(c.left, c.right, c.frames);
-        const now = performance.now();
-        if (now - lastReport > 150) {
-          lastReport = now;
-          post({ type: "progress", fraction: Math.min(1, (c.timestamp + c.frames / c.sampleRate) / editedSecondsAll) });
-        }
-      });
-      if (!wav) throw new Error("Export produced no audio.");
-      const buffer = (wav as WavWriter).finish();
+      const sampleRate = aTrack ? await aTrack.getSampleRate() : 48000;
+      // WAV is written directly; MP3 (LAME/WASM), AAC and Opus (WebCodecs)
+      // go through the shared encoder.
+      const buffer = await encodeAudioFile(outputKind, msg.data.audioKbps ?? DEFAULT_AUDIO_KBPS, sampleRate, (push) =>
+        render(gain, async (c) => {
+          await push(c.left, c.right, c.frames, c.timestamp);
+          const now = performance.now();
+          if (now - lastReport > 150) {
+            lastReport = now;
+            post({ type: "progress", fraction: Math.min(1, (c.timestamp + c.frames / c.sampleRate) / editedSecondsAll) });
+          }
+        }));
       post({ type: "progress", fraction: 1 });
       post({ type: "done", buffer, ms: performance.now() - t0 }, [buffer]);
       return;

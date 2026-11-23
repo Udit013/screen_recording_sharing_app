@@ -172,6 +172,40 @@ Fades and peak normalisation are applied on the edited timeline, outside the per
   - Live preview schedules each clip once per play, at the right offset.
 - **Clip exports.** Added audio is shifted onto the clip's own timeline.
 
+## Convert (video ↔ audio)
+
+The **Convert** page (`/convert`) works on any local file, and nothing is uploaded. The editor's export dialog also offers the same audio formats for the edited video.
+
+- **Video → audio:** MP3, M4A (AAC), Opus (Ogg) or WAV, with bitrates from 64 to 320 kbps (Opus up to 256) and a size estimate before converting.
+  - AAC and Opus use the browser's WebCodecs encoders.
+  - WAV is written directly.
+  - MP3 uses LAME compiled to WebAssembly (`@mediabunny/mp3-encoder` 1.62.1). The wrapper is MPL-2.0 and LAME itself is LGPL; it's loaded as a separate WASM module and is unmodified.
+- **Audio → video:** an MP4 (H.264 + AAC) with:
+  - a solid colour or an image background, optionally dimmed;
+  - an animated **spectrum-bar** or **waveform** visualizer, or none;
+  - an optional title, Latin or Devanagari;
+  - shapes for Reels/Shorts/TikTok (9:16), YouTube (16:9), square and 4:5;
+  - 480p/720p/1080p, three quality levels, 24/30/60 fps and an audio bitrate choice.
+
+  The live preview and the encoder share one renderer (`lib/studio/visualizer.ts`): an FFT on a 24 kHz mono analysis signal.
+- **Measured** with a click at exactly 1.000 s in the source:
+
+  | Output | Click lands at |
+  |---|---|
+  | M4A, Opus, WAV | 1.000–1.001 s |
+  | Audio → video MP4 | 1.0000 s |
+  | MP3 output | 1.026 s |
+
+  - Every file's duration matches its source.
+  - The size estimate was 237 KB for a 236 KB MP3.
+- **Two timing bugs found and fixed:**
+  - mediabunny doesn't remove the MP3 encoder/decoder delay or the AAC priming of *inputs*, so converted audio ran 23–49 ms late. SnapCast now trims negative-timestamp priming, and reads the LAME tag's encoder delay (+529 decoder samples) for MP3 inputs (`lib/media/gapless.ts`).
+  - The same fix applies to MP3 files used as multitrack clips: a click clip placed at 2.0 s now lands at 3.0000 s in WAV and MP4 exports.
+- **Limitations:**
+  - **MP3 outputs** start ~25 ms late in players, because mediabunny's MP3 writer has no room for the LAME gapless header. It's leading silence, and video exports use AAC, so A/V sync is unaffected.
+  - **Bitrate** is a target. AAC uses fewer bits than requested on very simple material such as a pure tone, so estimates are an upper bound there.
+  - **Memory:** files are decoded in memory. Practical limits are about 30 minutes of audio with a visualizer, longer without one.
+
 ## Transcription languages
 
 Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**, **English**, **Hindi**, **Sanskrit** or **Hinglish** (mixed). Everything runs in the browser with OpenAI Whisper weights (MIT) via transformers.js (Apache-2.0):
@@ -246,7 +280,7 @@ Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**,
 
 ## Licences
 
-**No npm dependency was added for the studio.**
+**One npm dependency was added for the studio:** `@mediabunny/mp3-encoder` (MP3 export; browsers can't encode MP3 natively).
 
 **Algorithms** (implemented from their published descriptions)
 
@@ -269,6 +303,7 @@ Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**,
 | Package | Licence |
 |---|---|
 | next 15.5.28, react / react-dom 19.1.0 | MIT |
+| @mediabunny/mp3-encoder 1.62.1 | MPL-2.0 (bundles the LGPL LAME encoder as WebAssembly) |
 | mediabunny 1.62.1 | MPL-2.0. Used unmodified; file-level copyleft applies only to changes to its own files |
 | @huggingface/transformers 4.3.1 | Apache-2.0 |
 | drizzle-orm 0.45.4 | Apache-2.0 |

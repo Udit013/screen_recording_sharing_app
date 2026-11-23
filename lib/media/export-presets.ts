@@ -8,6 +8,7 @@ import type { AudioFx } from "@/lib/studio/fx";
 import type { Caption, CaptionStyle } from "@/lib/studio/captions";
 import type { VideoLook } from "@/lib/studio/frame";
 import type { AudioMix } from "@/lib/studio/tracks";
+import type { AudioFormatId } from "./audioFormats";
 
 export type ExportPreset = "original" | "1080p" | "720p" | "compact";
 export type ExportQuality = "high" | "medium" | "low";
@@ -22,7 +23,7 @@ export const EXPORT_PRESETS: Record<
   compact: { label: "Compact", detail: "480p, smallest file", maxHeight: 480, quality: "low" },
 };
 
-export type ExportOutput = "mp4" | "wav";
+export type ExportOutput = "mp4" | AudioFormatId;
 
 export type ExportRequest = {
   type: "export";
@@ -31,8 +32,10 @@ export type ExportRequest = {
   preset: ExportPreset;
   /** Audio effects to render into the file; null/inactive copies the audio as is. */
   audioFx?: AudioFx | null;
-  /** "wav" renders the edited, processed audio alone. Default "mp4". */
+  /** An audio format renders the edited, processed audio alone. Default "mp4". */
   output?: ExportOutput;
+  /** Bitrate for lossy audio-only outputs (MP3, M4A, Opus), kbps. */
+  audioKbps?: number;
   /** Captions to burn into the video, in SOURCE time (mapped onto the segments in the worker). */
   captions?: { captions: Caption[]; style: CaptionStyle } | null;
   /** Framing and colour to render (aspect, fit, crop, adjustments). */
