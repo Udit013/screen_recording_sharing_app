@@ -27,6 +27,10 @@ Select any range to **copy a clip link** that plays just that part, or **export 
 
 Every edit is non-destructive and undoable (⌘Z / ⇧⌘Z). The upload is never modified, and comments, notes and chapters stay anchored because cuts live in source time.
 
+### Studio: captions, framing and audio
+
+The editor also has **Captions**, **Video** and **Audio** tabs, which work like a small free studio. Captions are generated from the transcript, styled with six templates (karaoke, word-pop and other animations), burned into exports or downloaded as SRT/VTT, and they follow every cut. Video adds 9:16, 1:1, 4:5 and 16:9 reframing (fill, fit or blurred background), crop and colour. Audio adds EQ, compression, gate, echo, reverb, limiter, fades, normalisation and manual pitch shift, with live Before/After. The preview and the export run the same code, so what you hear and see is what you get. Architecture, measurements, licences, what isn't built yet and a self-hosting plan: [docs/STUDIO.md](docs/STUDIO.md).
+
 ### How it works
 
 | Stage | Runs in | How |

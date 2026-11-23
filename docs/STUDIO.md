@@ -1,0 +1,258 @@
+# SnapCast Studio: audio, captions and video editing
+
+The editor at `/video/[id]/edit` is a small studio for one recording. All of it runs in the browser and is free to run. No paid API is used for editing, and AI (Gemini) is used only for summaries and chapters, never to edit.
+
+It has four tabs:
+
+| Tab | What it does |
+|---|---|
+| **Transcript** | Whisper transcription on the device, cut by deleting words, tighten pauses |
+| **Captions** | Captions from the transcript, edited and styled, burned into exports or downloaded as SRT/VTT |
+| **Video** | Output shape (16:9, 9:16, 1:1, 4:5), fill/fit/blur, crop, brightness/contrast/saturation |
+| **Audio** | Gain, pitch shift, clean-up filters, noise gate, 10-band EQ, compressor, echo, reverb, limiter, fades, normalisation, presets |
+
+Every change is non-destructive. The uploaded file is never modified. Everything shares one undo history (⌘Z / ⇧⌘Z) and one autosave. What you preview is what exports, because the preview and the exporter run the **same code**.
+
+---
+
+## Architecture
+
+```
+                 lib/studio/*  (pure TypeScript, unit-tested in Node)
+   ┌───────────────┬────────────────┬───────────────┬────────────────┐
+   │ fx.ts dsp.ts  │ captions.ts    │ frame.ts      │ doc.ts         │
+   │ effect model  │ caption model, │ framing maths │ undoable doc:  │
+   │ + DSP engine  │ SRT/VTT,       │ + drawFrame   │ cuts, fx,      │
+   │               │ time mapping   │               │ captions, look │
+   │               │ captionRender  │               │                │
+   └──────┬────────┴───────┬────────┴──────┬────────┴────────────────┘
+          │                │               │
+   ┌──────▼─────────┐  ┌───▼───────────────▼──┐   ┌──────────────────────┐
+   │ AudioWorklet   │  │ Preview stage canvas  │   │ Export Web Worker    │
+   │ (live preview) │  │ (useStageRenderer)    │   │ (export.worker.ts)   │
+   │ engine injected│  │ video → drawFrame →   │   │ decode → drawFrame → │
+   │ as source text │  │ drawCaption           │   │ drawCaption → encode │
+   └────────────────┘  └──────────────────────┘   │ audio → same engine  │
+                                                  └──────────────────────┘
+```
+
+- **One engine, three callers.** `createAudioEngine` (lib/studio/dsp.ts) runs in the AudioWorklet for the live preview, in the export worker for the file, and in Vitest. The worklet can't import modules, so the engine is written to be self-contained and injected as source text (`worklet.ts`). A test rebuilds it the same way.
+- **One draw path for pictures.** `drawFrame` (framing) and `drawCaption` (captions) take any 2D context. The preview draws from the `<video>`. The exporter draws from decoded `VideoSample`s on an `OffscreenCanvas`. Positions and sizes are fractions of the frame, so a 330 px preview and a 1080 px export match. Measured: a caption's bounding box agreed to within 0.001 of the frame between preview and export.
+- **Source time everywhere.** Cuts, captions and word timings are stored in source time. Each consumer maps onto the edited timeline (`toEditedCaptions`, `captionsForSegments`). Undoing a cut therefore brings its captions back, and clip exports get captions on the clip's own timeline.
+
+### Persistence
+
+All settings live in the existing `videos.edl` jsonb column (`StoredEdl` in `drizzle/schema.ts`). No migration is needed:
+
+| Field | Contents |
+|---|---|
+| `cuts`, `pauseLevel` | Unchanged |
+| `audioFx?` | Audio Studio settings (`AudioFx`, version 1) |
+| `captions?` | `{ version, burnIn, captions[], style }`. Text and timings only |
+| `look?` | `{ version, aspect, fit, crop, focusX/Y, background, brightness, contrast, saturation }` |
+
+- Every new field is optional. Edits saved before a field existed load with defaults, and a `saveEdit` call that omits a field keeps the stored value rather than wiping it.
+- Everything is validated on the server: `sanitizeAudioFx`, `sanitizeCaptionTrack` and `sanitizeLook` clamp every number, drop unknown keys and never throw. Caption text is stripped of control and bidi-override characters.
+- Saves are owner-only (`requireOwnedVideo`).
+- **No media is ever stored in Postgres.** Rendered files exist only in the user's browser until they download them.
+
+---
+
+## Audio Studio
+
+**Signal chain** (fixed order):
+
+input gain → pitch shift → high-pass → noise gate → 10-band EQ → low-pass → compressor → delay → reverb → output gain → look-ahead limiter
+
+Fades and peak normalisation are applied on the edited timeline, outside the per-sample chain.
+
+**Processing**
+
+- Always stereo. Mono sources are duplicated to two channels in both preview and export, so stereo effects sound the same in both.
+- Export decodes the source audio at **its own sample rate** (never the 16 kHz analysis copy), trims it sample-accurately at each cut, processes it, compensates the engine's latency and applies fades.
+- Normalisation is two-pass: the first pass measures the peak, the second applies the gain (capped at +24 dB).
+
+**AAC priming fix (all MP4 exports)**
+
+- AAC encoders add priming samples. Without an edit list, every export played its audio about 44 ms late.
+- The exporter now measures the encoder's delay (it encodes a click, decodes it and finds the click) and shifts the audio timestamps. mediabunny then writes an `elst` box.
+- Verified: a click at 8.000 s in the source is at 8.0000 s in the export.
+
+**Pitch shift.** This is a manual shift in semitones (±12). It is *not* pitch correction: it never retunes notes to a key.
+
+- Two read heads play the input at the pitch ratio, with sin² crossfades.
+- When a head restarts, it searches up to 12.5 ms for the offset whose waveform matches the other head (the WSOLA idea), so the crossfade adds no phase jump.
+- Measured: 220 Hz shifted by ±3, −4 and ±12 semitones lands within 0.5% of the target.
+- A worst-case 128-frame block takes about 1 ms of the 2.67 ms real-time budget.
+- Formants move with the pitch, so large shifts sound unnatural.
+
+**Measured on exported files** (ffmpeg and Python, against a test file with a 100 Hz tone, a 3 kHz tone and a click at 8.000 s):
+
+| Effect | Result |
+|---|---|
+| High-pass 1 kHz | 100 Hz −40.0 dB, 3 kHz −0.1 dB |
+| Echo 250 ms | Repeat at exactly +250 ms, equal level at 50% mix |
+| Limiter at −6 dBFS with +12 dB drive | Peak exactly −6.00 dBFS |
+| Pitch +12 st | 100 Hz → 200 Hz; click at 7.9988 s (latency compensated) |
+| WAV export of a 10 s edit | Exactly 10.000 s |
+| Untouched video | Audio passes through unprocessed (faithful copy) |
+
+**Presets**
+
+- Voice presets: Clean Podcast, Professional Narration, Studio Vocal, Singing, Concert, Lo-Fi, Robotic (a comb filter), Bright, Warm, Deep Voice (−4 st).
+- Also EQ, reverb and delay presets.
+- Your own presets are saved in the browser's `localStorage`.
+
+---
+
+## Captions
+
+- **Generate.** Captions are built from the word transcript. A new caption starts after a sentence end, a pause longer than 0.6 s, the word limit, or 4 s of speech.
+- **Edit.** Edit text, split at the midpoint, merge with the next caption, delete, add one at the playhead, and nudge the start or end by 50 ms. Neighbours never overlap. Changing the text keeps word timings when the word count is unchanged; otherwise the words are spread evenly across the caption.
+- **Templates.** Classic, Bold Reels, Karaoke, Word Pop, Modern Creator and Minimal. Each one sets font, size, weight, case, colours, outline, shadow, background panel, position, safe margin, words per line, lines and animation, and every setting can be edited.
+- **Animations.**
+  - Karaoke: highlights the spoken word.
+  - Word pop: each word scales in as it's spoken.
+  - Reveal: words appear one by one.
+  - Fade: the caption fades in and out.
+- **Burn-in.** The export composites each frame on an `OffscreenCanvas`. Screen recordings are often variable-frame-rate: a static screen can hold a single frame for seconds. Held frames are therefore split into 1/30 s steps whenever captions are drawn. Verified: a source with 5 frames in 10 s exported as 300 frames, with words popping in during a single source frame.
+- **SRT / WebVTT.** Both are written on the edited timeline. VTT cue text is escaped, so caption text can't inject markup or fake a timing line.
+- **Fonts.** Inter, Montserrat and Bebas Neue are self-hosted in `public/fonts/captions` (SIL OFL 1.1, licence files alongside) and loaded with `FontFace` in both the page and the worker. Static font files bypass the auth middleware so the worker can fetch them.
+
+---
+
+## Video
+
+- **Shapes.**
+  - Original, 16:9, 9:16, 1:1 and 4:5.
+  - The export preset bounds the **short side**, so 720p vertical is 720×1280.
+  - Output never exceeds the source's resolution.
+- **Fill modes.**
+  - Fill: crops to the frame, with a focus point that picks what stays in view.
+  - Fit: shows the whole picture, with coloured bars.
+  - Blur: shows the whole picture over a blurred, dimmed copy of itself.
+- **Crop and colour.** Crop with four trims (minimum 10% of the frame). Brightness, contrast and saturation from −100 to +100, applied as canvas filters.
+- **Preview.**
+  - With no framing, the native video shows and only captions are drawn over it.
+  - With framing, a canvas paints every frame from the playing (invisible) video.
+  - The paused frame is painted with `requestVideoFrameCallback`. This was measured: Chrome's `loadeddata` fires before a frame can be drawn.
+- **Verified.**
+  - 9:16 + blur + captions exported at 720×1280.
+  - 1:1 fill with the focus at the right edge exported exactly the right-most 720×720 of the source, at −30% brightness.
+
+---
+
+## What is implemented, and what is not
+
+**Implemented and verified in exported files**
+
+- Audio:
+  - All effects, presets and fades listed above.
+  - Normalisation.
+  - Before/After and live preview.
+  - Saved settings and custom presets.
+  - WAV export.
+  - Manual pitch shift.
+- Captions: generation, editing, six templates, animations, burn-in, SRT/VTT, sync after cuts.
+- Video: aspect presets, fill/fit/blur, crop, reposition, colour adjustments.
+
+**Not implemented** (deferred; not offered in the UI)
+
+| Feature | Why / what it needs |
+|---|---|
+| Pitch correction ("autotune"): pitch detection, key and scale, retune speed | Needs a pitch tracker (e.g. YIN) driving a time-varying shift. The shifter above is the building block; detection and scale snapping are not built. Nothing in the UI is called autotune. |
+| Formant-preserving pitch shift | Needs spectral-envelope processing (e.g. LPC or a phase vocoder). |
+| Multitrack audio: music bed, voiceover, ducking | Needs extra uploaded assets (storage), a track model and mixing in the export. |
+| Text and image overlays | Fits the existing `drawFrame` → canvas path, but there is no overlay model or UI yet. |
+| Timeline improvements (zoom, track lanes, caption blocks on the timeline) | Not started. |
+| Effects on the public video page | Viewers see cuts only. Audio effects, captions and framing appear in exported files, not in the hosted player. |
+| Loudness normalisation in LUFS | Normalisation is peak-based. |
+
+---
+
+## Licences
+
+**No npm dependency was added for the studio.**
+
+**Algorithms** (implemented from their published descriptions)
+
+| Algorithm | Source / status |
+|---|---|
+| Biquad filters | Robert Bristow-Johnson, "Audio EQ Cookbook" (published formulas) |
+| Reverb | Freeverb topology, Jezar at Dreampoint (public domain) |
+| Pitch-shift splice alignment | WSOLA concept (Verhelst & Roelands, 1993), independently implemented |
+| Compressor, gate, look-ahead limiter | Standard feed-forward designs |
+
+**Assets**
+
+| Asset | Licence |
+|---|---|
+| Inter, Montserrat, Bebas Neue fonts (Fontsource 5.3.0 builds) | SIL Open Font License 1.1, licence files in `public/fonts/captions/` |
+| Whisper `Xenova/whisper-tiny.en` weights | MIT (OpenAI Whisper) |
+
+**Runtime dependencies** (versions as installed)
+
+| Package | Licence |
+|---|---|
+| next 15.5.28, react / react-dom 19.1.0 | MIT |
+| mediabunny 1.62.1 | MPL-2.0. Used unmodified; file-level copyleft applies only to changes to its own files |
+| @huggingface/transformers 4.3.1 | Apache-2.0 |
+| drizzle-orm 0.45.4 | Apache-2.0 |
+| better-auth 1.7.12, @neondatabase/serverless 1.2.0, cloudinary 2.11.0, clsx, tailwind-merge | MIT |
+| @google/generative-ai 0.24.1 | Apache-2.0 |
+| dotenv 16.5.0 | BSD-2-Clause |
+
+**The repository itself has no LICENSE file yet.** To publish SnapCast as open source, the owner needs to choose a licence (for example MIT, Apache-2.0 or AGPL-3.0) and add it. All dependencies above are compatible with any of those.
+
+---
+
+## Proprietary or hosted services still in use
+
+| Service | Used for | Required? |
+|---|---|---|
+| **Cloudinary** | Video storage and delivery, thumbnails, the audio-only rendition used for analysis | Yes, today |
+| **Neon** | Hosted Postgres (Postgres itself is open source) | Any Postgres works |
+| **Vercel** | Hosting | Any Node host works (`next start`) |
+| **Google OAuth** | Sign-in | Yes, today (the only provider configured) |
+| **Google Gemini** | AI summaries and chapters only. Never editing | Optional |
+| **Hugging Face Hub, jsDelivr** | First-time download of the Whisper model and the ONNX WASM runtime, then cached | Yes, today |
+
+## Self-hosting migration plan
+
+The editing studio is already fully client-side, so it needs no changes. The steps below replace the hosted services around it, cheapest first:
+
+1. **Hosting.** Build and run with `next build && next start` in a Node 20+ container behind any reverse proxy. Nothing depends on Vercel-specific APIs.
+2. **Database.** Point `DATABASE_URL` at any Postgres 15+.
+   - Swap the `@neondatabase/serverless` driver in `drizzle/db.ts` for `postgres` (postgres.js) or `pg` with the matching Drizzle adapter.
+   - Schema and queries are unchanged. Run the existing Drizzle migrations.
+3. **Sign-in.** better-auth supports email and password, GitHub and generic OIDC. Enable email/password, or point OIDC at a self-hosted Keycloak or Authentik, and remove the Google provider.
+4. **Model and WASM CDNs.**
+   - Serve the Whisper files and onnxruntime-web's WASM from `public/`.
+   - Set `env.localModelPath` / `env.allowRemoteModels = false` and `env.backends.onnx.wasm.wasmPaths` in `lib/media/transcribe.worker.ts`.
+5. **Media storage (the largest step).** Replace Cloudinary with S3-compatible storage (MinIO, Garage or any S3) and an ffmpeg worker that runs on upload. The worker produces:
+   - an H.264/AAC MP4 with `+faststart`;
+   - a JPEG thumbnail;
+   - the mono MP3 audio rendition that the editor's analysis downloads.
+
+   The upload flow then signs S3 PUTs instead of Cloudinary uploads. The editor and exporter only need a CORS-enabled URL (`Access-Control-Allow-Origin` and byte-range requests), because export and the Web Audio preview read the video cross-origin.
+6. **AI summaries (optional).** Point the summary step at a local model (e.g. an Ollama endpoint), or turn it off. Editing doesn't use it.
+
+## Known limitations
+
+- Export buffers the output file in memory. The practical ceiling is about 30–45 minutes of 720p.
+- More than two audio channels are folded to the first two.
+- Canvas filters (colour adjustments, blur background) need `ctx.filter`. Without it, adjustments are skipped and the blur background falls back to a dimmed copy, in both preview and export.
+- Burned-in captions use the self-hosted fonts. If they can't be fetched (offline), preview and export both fall back to a system sans-serif.
+- Custom audio presets are per-browser (`localStorage`).
+- Export was verified in Chromium. Firefox and Safari ship WebCodecs but weren't tested here.
+
+## Verifying
+
+```bash
+npm test          # 188 unit tests: DSP, captions, framing, history, EDL, alignment, …
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+Exports were checked by rendering in the browser and measuring the files with ffmpeg: frame grabs, tone frequencies, click timing, durations and stream properties.
