@@ -52,6 +52,7 @@ function loadCustom(): CustomPreset[] {
 const fmtHz = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)} kHz` : `${Math.round(v)} Hz`);
 const fmtDb = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
 const fmtMs = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v < 10 ? v.toFixed(1) : Math.round(v)} ms`);
+const fmtSt = (v: number) => (v === 0 ? "0 st" : `${v > 0 ? "+" : "−"}${Math.abs(v) % 1 === 0 ? Math.abs(v) : Math.abs(v).toFixed(1)} st${Math.abs(v) === 12 ? " (octave)" : ""}`);
 const fmtPct = (v: number) => `${Math.round(v * 100)}%`;
 
 export default function AudioStudio({ fx, onChange, bypass, onBypassChange, previewStatus, meterRef }: AudioStudioProps) {
@@ -171,6 +172,24 @@ export default function AudioStudio({ fx, onChange, bypass, onBypassChange, prev
             help="Level going into the effects chain." onChange={(v) => update("inGain", (d) => { d.inputGainDb = v; })} />
           <Slider label="Output gain" value={fx.outputGainDb} range={RANGES.gainDb} format={fmtDb}
             help="Level after every effect, before the limiter." onChange={(v) => update("outGain", (d) => { d.outputGainDb = v; })} />
+        </Section>
+
+        <Section title="Pitch" enabled={fx.pitch.enabled && fx.pitch.semitones !== 0}
+          onToggle={(v) => update("pitchOn", (d) => { d.pitch.enabled = v; if (v && d.pitch.semitones === 0) d.pitch.semitones = -2; })}
+          summary={fx.pitch.enabled && fx.pitch.semitones !== 0 ? fmtSt(fx.pitch.semitones) : "Off"}>
+          <Slider label="Shift" value={fx.pitch.semitones} range={RANGES.semitones} format={fmtSt}
+            help="Raises or lowers the voice by a fixed amount. This is a manual pitch shift, not pitch correction: it doesn't retune notes to a key. Formants move with the pitch, so large shifts sound unnatural."
+            onChange={(v) => update("pitch", (d) => { d.pitch.semitones = v; d.pitch.enabled = v !== 0; })} />
+          <div className="as-chips" role="group" aria-label="Pitch shortcuts">
+            {[-12, -5, -2, 2, 5, 12].map((st) => (
+              <button key={st} type="button" className="as-chip" onClick={() => update("pitchp", (d) => { d.pitch = { enabled: true, semitones: st }; })}>
+                {fmtSt(st)}
+              </button>
+            ))}
+            {fx.pitch.semitones !== 0 && (
+              <button type="button" className="as-chip" onClick={() => update("pitch0", (d) => { d.pitch = { enabled: false, semitones: 0 }; })}>Reset</button>
+            )}
+          </div>
         </Section>
 
         <Section title="Clean up" enabled={fx.highpass.enabled || fx.lowpass.enabled || fx.gate.enabled}

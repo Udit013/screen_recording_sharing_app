@@ -3,7 +3,7 @@
 // worklet, the export worker and the server (which must never trust it).
 //
 // Signal order is fixed (see dsp.ts):
-//   input gain → high-pass → noise gate → EQ → low-pass → compressor
+//   input gain → pitch shift → high-pass → noise gate → EQ → low-pass → compressor
 //   → delay → reverb → output gain → limiter
 // Fades and peak normalization are applied on the edited timeline, outside
 // the per-sample chain.
@@ -26,6 +26,11 @@ export interface AudioFx {
   lowpass: { enabled: boolean; freq: number };
   gate: { enabled: boolean; thresholdDb: number; rangeDb: number; attackMs: number; releaseMs: number };
   eq: { enabled: boolean; bands: EqBand[] };
+  /**
+   * Manual pitch shift in semitones (time-domain, formants not preserved).
+   * Optional in stored data: settings saved before it existed load as off.
+   */
+  pitch: { enabled: boolean; semitones: number };
   compressor: {
     enabled: boolean;
     thresholdDb: number;
@@ -73,6 +78,7 @@ export const RANGES = {
   compKnee: { min: 0, max: 24, step: 0.5, unit: "dB" },
   makeupDb: { min: 0, max: 24, step: 0.5, unit: "dB" },
   delayMs: { min: 1, max: 1500, step: 1, unit: "ms" },
+  semitones: { min: -12, max: 12, step: 0.1, unit: "st" },
   feedback: { min: 0, max: 0.85, step: 0.01, unit: "" },
   mix: { min: 0, max: 1, step: 0.01, unit: "" },
   roomSize: { min: 0, max: 1, step: 0.01, unit: "" },
@@ -103,6 +109,7 @@ export const defaultFx = (): AudioFx => ({
   lowpass: { enabled: false, freq: 16000 },
   gate: { enabled: false, thresholdDb: -50, rangeDb: -40, attackMs: 2, releaseMs: 120 },
   eq: { enabled: false, bands: defaultBands() },
+  pitch: { enabled: false, semitones: 0 },
   compressor: { enabled: false, thresholdDb: -20, ratio: 3, kneeDb: 6, attackMs: 10, releaseMs: 150, makeupDb: 3 },
   delay: { enabled: false, timeMs: 320, feedback: 0.35, mix: 0.25, pingPong: false },
   reverb: { enabled: false, roomSize: 0.5, damping: 0.5, preDelayMs: 15, width: 1, mix: 0.2 },
@@ -130,6 +137,7 @@ export function isFxActive(fx: AudioFx | null | undefined): boolean {
     fx.lowpass.enabled ||
     fx.gate.enabled ||
     (fx.eq.enabled && fx.eq.bands.some((b) => b.gainDb !== 0)) ||
+    (fx.pitch.enabled && fx.pitch.semitones !== 0) ||
     fx.compressor.enabled ||
     fx.delay.enabled ||
     fx.reverb.enabled ||
@@ -172,6 +180,7 @@ export function sanitizeAudioFx(input: unknown): AudioFx {
   const d = defaultFx();
   const i = obj(input);
   const hp = obj(i.highpass), lp = obj(i.lowpass), g = obj(i.gate), eq = obj(i.eq);
+  const ps = obj(i.pitch);
   const c = obj(i.compressor), dl = obj(i.delay), rv = obj(i.reverb), lim = obj(i.limiter), nz = obj(i.normalize);
   const rawBands = Array.isArray(eq.bands) ? eq.bands : [];
 
@@ -200,6 +209,7 @@ export function sanitizeAudioFx(input: unknown): AudioFx {
         };
       }),
     },
+    pitch: { enabled: bool(ps.enabled, false), semitones: num(ps.semitones, RANGES.semitones, 0) },
     compressor: {
       enabled: bool(c.enabled, false),
       thresholdDb: num(c.thresholdDb, RANGES.compThreshold, d.compressor.thresholdDb),
@@ -238,8 +248,8 @@ export function sanitizeAudioFx(input: unknown): AudioFx {
 
 // ── Presets ──────────────────────────────────────────────────────────────
 // Each preset is a real processing chain: a partial set of settings layered
-// over the defaults. None of them changes pitch; pitch-based voices need the
-// pitch shifter and are not offered until it exists.
+// over the defaults. Only "Deep Voice" shifts pitch; nothing here retunes to
+// a key (that would be pitch correction, which is not implemented).
 
 type Partial2<T> = { [K in keyof T]?: T[K] extends object ? (T[K] extends unknown[] ? T[K] : Partial<T[K]>) : T[K] };
 type FxPatch = Partial2<Omit<AudioFx, "version" | "eq">> & { eq?: { enabled?: boolean; gains?: number[] } };
@@ -359,6 +369,18 @@ export const PRESETS: Preset[] = [
       highpass: { enabled: true, freq: 150 },
       delay: { enabled: true, timeMs: 9, feedback: 0.8, mix: 0.6, pingPong: false },
       compressor: { enabled: true, thresholdDb: -24, ratio: 4, kneeDb: 4, attackMs: 4, releaseMs: 100, makeupDb: 4 },
+      limiter: { enabled: true, ceilingDb: -1 },
+    },
+  },
+  {
+    id: "deep",
+    label: "Deep Voice",
+    description: "Pitched down four semitones with a fuller low end.",
+    patch: {
+      pitch: { enabled: true, semitones: -4 },
+      highpass: { enabled: true, freq: 50 },
+      eq: { enabled: true, gains: EQ_WARM },
+      compressor: { enabled: true, thresholdDb: -22, ratio: 2.5, kneeDb: 6, attackMs: 10, releaseMs: 150, makeupDb: 3 },
       limiter: { enabled: true, ceilingDb: -1 },
     },
   },

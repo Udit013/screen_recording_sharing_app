@@ -254,3 +254,50 @@ describe("effect settings", () => {
     expect(isFxActive(defaultFx())).toBe(true); // the default limiter is a real effect
   });
 });
+
+describe("pitch shift", () => {
+  /** Strongest frequency within ±25% of `near` (Goertzel scan, 0.25 Hz steps), over the settled part. */
+  const freqOf = (x: Float32Array, near: number) => {
+    const from = Math.round(0.2 * SR);
+    let best = 0, bestF = 0;
+    for (let f = near * 0.75; f <= near * 1.25; f += 0.25) {
+      const w = (2 * Math.PI * f) / SR, c = 2 * Math.cos(w);
+      let s1 = 0, s2 = 0;
+      for (let i = from; i < x.length; i++) { const s0 = x[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+      const p = s1 * s1 + s2 * s2 - c * s1 * s2;
+      if (p > best) { best = p; bestF = f; }
+    }
+    return bestF;
+  };
+
+  for (const [st, expected] of [[12, 440], [-12, 110], [3, 220 * Math.pow(2, 3 / 12)], [-4, 220 * Math.pow(2, -4 / 12)]] as const) {
+    it(`shifts 220 Hz by ${st} semitones to ${expected.toFixed(1)} Hz`, () => {
+      const out = run(bare({ pitch: { enabled: true, semitones: st } }), sine(220, 2)).L;
+      expect(freqOf(out, expected) / expected).toBeCloseTo(1, 2);
+    });
+  }
+
+  it("keeps the level close to the input", () => {
+    const input = sine(220, 2);
+    const out = run(bare({ pitch: { enabled: true, semitones: 5 } }), input).L;
+    expect(Math.abs(db(settled(out)) - db(settled(input)))).toBeLessThan(3);
+    expect(peak(out)).toBeLessThan(0.75);
+  });
+
+  it("does nothing at 0 semitones or when off, and reports its latency", () => {
+    const input = sine(220, 0.5);
+    expect(Array.from(run(bare({ pitch: { enabled: true, semitones: 0 } }), input).L)).toEqual(Array.from(input));
+    const e = createAudioEngine(SR);
+    e.configure(bare({ pitch: { enabled: true, semitones: 2 } }));
+    expect(e.latency()).toBe(Math.round((0.06 * SR + 0.0125 * SR) / 2));
+    expect(isFxActive(bare({ pitch: { enabled: true, semitones: 2 } }))).toBe(true);
+    expect(isFxActive(bare({ pitch: { enabled: true, semitones: 0 } }))).toBe(false);
+  });
+
+  it("loads settings saved before pitch existed as off", () => {
+    const old = JSON.parse(JSON.stringify(defaultFx())) as Record<string, unknown>;
+    delete old.pitch;
+    expect(sanitizeAudioFx(old).pitch).toEqual({ enabled: false, semitones: 0 });
+    expect(sanitizeAudioFx({ pitch: { enabled: true, semitones: 99 } }).pitch.semitones).toBe(12);
+  });
+});

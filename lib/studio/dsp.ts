@@ -23,6 +23,13 @@
 //   - Compressor / gate: feed-forward, stereo-linked envelope followers.
 //   - Limiter: look-ahead peak limiter with a sliding-window minimum, plus a
 //     final hard clamp so the ceiling is a guarantee, not a target.
+//   - Pitch shift: a two-head delay-line shifter with waveform-aligned
+//     splices (the idea behind WSOLA). Each read head plays the input at the
+//     pitch ratio for one grain, faded in and out with a sin² window; the two
+//     heads are half a grain apart so their gains always sum to one. When a
+//     head restarts (at zero gain) it searches up to 12.5 ms for the offset
+//     whose waveform best matches the other head, so the crossfade adds no
+//     phase jump and the output pitch is exact. Formants shift with pitch.
 
 /* eslint-disable no-var -- `var` keeps the injected worklet source free of
    block-scoping transforms the compiler might otherwise emit. */
@@ -42,7 +49,7 @@ export interface AudioEngine {
   /** Processes two channels in place. */
   process(left: Float32Array, right: Float32Array, frames: number): void;
   reset(): void;
-  /** Frames of delay the engine adds (the limiter's look-ahead), or 0. */
+  /** Frames of delay the engine adds (limiter look-ahead + pitch shifter's mean delay), or 0. */
   latency(): number;
   readMeter(): EngineMeter;
   /** The EQ's magnitude response in dB at each frequency. */
@@ -153,6 +160,65 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
   }
 
   // Gains (smoothed so slider moves don't click)
+  // Pitch shifter (see the header). Delays are in frames behind the write
+  // position; a head's delay changes by (1 − ratio) per frame.
+  var PSW = Math.round(0.06 * SR);       // sweep: how far a head's delay travels in one grain
+  var PSK = Math.round(0.0125 * SR);     // splice search range (one period of 80 Hz)
+  var PSC = Math.round(0.01 * SR);       // correlation window
+  var PSN = PSW + PSK + PSC + 8;
+  var psL = new Float32Array(PSN), psR = new Float32Array(PSN), psM = new Float32Array(PSN), psPos = 0;
+  var psOn = false, psRatio = 1, psGrain = PSW;
+  var hdD = [0, 0], hdAge = [0, 0.5];
+  function psAt(buf: Float32Array, d: number) {
+    var f = psPos - d;
+    var i = Math.floor(f);
+    var fr = f - i;
+    var i0 = ((i % PSN) + PSN) % PSN;
+    var i1 = i0 + 1 === PSN ? 0 : i0 + 1;
+    return buf[i0] * (1 - fr) + buf[i1] * fr;
+  }
+  /** Correlation of the mono history at integer delays d and od (stride 2), normalised by d's energy. */
+  function psScore(d: number, od: number) {
+    var dot = 0, en = 0;
+    var ia = psPos - d, ib = psPos - od;
+    for (var j = 0; j < PSC; j += 2) {
+      var pa = ia - j, pb = ib - j;
+      if (pa < 0) pa += PSN;
+      if (pb < 0) pb += PSN;
+      var a = psM[pa], b = psM[pb];
+      dot += a * b; en += a * a;
+    }
+    return dot / Math.sqrt(en + 1e-9);
+  }
+  /**
+   * Where a restarting head should start so its waveform lines up with head
+   * `other`: a coarse search every 3 frames, refined to the frame. Integer
+   * indexing on a mono copy keeps a splice well under one render quantum.
+   */
+  function psSplice(other: number) {
+    var base = psRatio > 1 ? PSW : 0;      // pitch up: start far back and catch up; down: start near and fall back
+    var od = Math.round(hdD[other]);
+    var best = base, bestScore = -Infinity, k, sc;
+    for (k = 0; k <= PSK; k += 3) {
+      sc = psScore(base + k, od);
+      if (sc > bestScore) { bestScore = sc; best = base + k; }
+    }
+    var c = best;
+    for (k = c - 2; k <= c + 2; k++) {
+      if (k < base || k > base + PSK || k === c) continue;
+      sc = psScore(k, od);
+      if (sc > bestScore) { bestScore = sc; best = k; }
+    }
+    return best + (hdD[other] - od); // keep the other head's sub-frame phase
+  }
+  function psResetHeads() {
+    var base = psRatio > 1 ? PSW : 0;
+    // Half a grain apart in age, and in delay: each at its own point of the sweep.
+    hdAge[0] = 0; hdAge[1] = 0.5;
+    hdD[0] = base; hdD[1] = base + (1 - psRatio) * psGrain * 0.5;
+    if (hdD[1] < 0) hdD[1] = 0;
+  }
+
   var inGainT = 1, inGain = 1, outGainT = 1, outGain = 1;
   var smooth = coefFor(10);
 
@@ -173,6 +239,14 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
     bypass = !fx.enabled;
     inGainT = dbToGain(fx.inputGainDb);
     outGainT = dbToGain(fx.outputGainDb);
+
+    var st = fx.pitch && fx.pitch.enabled ? fx.pitch.semitones : 0;
+    var wasOn = psOn;
+    psOn = st !== 0;
+    psRatio = Math.pow(2, st / 12);
+    // A grain lasts as long as a head takes to sweep PSW at this ratio.
+    psGrain = psOn ? Math.max(PSC, PSW / Math.abs(1 - psRatio)) : PSW;
+    if (psOn && !wasOn) psResetHeads();
 
     hp.on = fx.highpass.enabled;
     designBiquad(hp, "highpass", fx.highpass.freq, Math.SQRT1_2, 0);
@@ -227,6 +301,7 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
     for (var j = 0; j < combsL.length; j++) { combsL[j].buf.fill(0); combsR[j].buf.fill(0); combsL[j].store = combsR[j].store = 0; combsL[j].pos = combsR[j].pos = 0; }
     for (var a = 0; a < apsL.length; a++) { apsL[a].buf.fill(0); apsR[a].buf.fill(0); apsL[a].pos = apsR[a].pos = 0; }
     preL.fill(0); preR.fill(0); prePos = 0;
+    psL.fill(0); psR.fill(0); psM.fill(0); psPos = 0; psResetHeads();
     limBufL.fill(0); limBufR.fill(0); limPos = 0; dqHead = dqTail = 0; limN = 0; limGain = 1;
     inGain = inGainT; outGain = outGainT;
   }
@@ -240,6 +315,21 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
 
       inGain = inGainT + (inGain - inGainT) * smooth;
       l *= inGain; r *= inGain;
+
+      if (psOn) {
+        psL[psPos] = l; psR[psPos] = r; psM[psPos] = l + r;
+        var g0 = Math.sin(Math.PI * hdAge[0]); g0 *= g0;
+        var g1 = 1 - g0;
+        l = psAt(psL, hdD[0]) * g0 + psAt(psL, hdD[1]) * g1;
+        r = psAt(psR, hdD[0]) * g0 + psAt(psR, hdD[1]) * g1;
+        for (var hh = 0; hh < 2; hh++) {
+          hdD[hh] += 1 - psRatio;
+          hdAge[hh] += 1 / psGrain;
+          if (hdAge[hh] >= 1) { hdAge[hh] -= 1; hdD[hh] = psSplice(1 - hh); }
+          if (hdD[hh] < 0) hdD[hh] = 0; else if (hdD[hh] > PSN - 3) hdD[hh] = PSN - 3;
+        }
+        psPos = psPos + 1 === PSN ? 0 : psPos + 1;
+      }
 
       if (hp.on) { l = runBiquad(hp, l, 0); r = runBiquad(hp, r, 1); }
 
@@ -346,7 +436,7 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
     configure: configure,
     process: process,
     reset: reset,
-    latency: function () { return limOn && !bypass ? DL : 0; },
+    latency: function () { return bypass ? 0 : (limOn ? DL : 0) + (psOn ? Math.round((PSW + PSK) / 2) : 0); },
     readMeter: function () {
       var m = { inPeak: mIn, outPeak: mOut, reductionDb: mRed };
       mIn = 0; mOut = 0; mRed = 0;
