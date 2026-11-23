@@ -13,6 +13,7 @@ import type { Cut } from "@/lib/media/edl";
 import type { PauseLevel } from "@/lib/media/pauses";
 import type { AudioFx } from "@/lib/studio/fx";
 import type { CaptionTrack } from "@/lib/studio/captions";
+import type { VideoLook } from "@/lib/studio/frame";
 
 export interface StoredEdl {
   version: 1;
@@ -29,6 +30,8 @@ export interface StoredEdl {
    * the same reason. Never contains media.
    */
   captions?: CaptionTrack | null;
+  /** Framing and colour (aspect, fit, crop, adjustments). Optional likewise. */
+  look?: VideoLook | null;
 }
 
 export const user = pgTable("user", {

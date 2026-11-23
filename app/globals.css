@@ -1770,3 +1770,21 @@ body {
 .cs-item-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
 .cs-item-actions .is-danger { margin-left: auto; color: var(--ed-danger); }
 @media (max-width: 480px) { .cs-templates { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Framed preview: the canvas paints the picture; the video keeps playing beneath it. */
+.ed-video video.is-behind-stage { opacity: 0; }
+
+/* ── Video tab ────────────────────────────────────────────────────────── */
+.vs-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.vs-aspects { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; min-width: 0; }
+.vs-aspects legend { font-size: 0.78rem; font-weight: 700; color: var(--ed-muted); margin-bottom: 6px; padding: 0; }
+.vs-aspect {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px; border-radius: 12px;
+  border: 1px solid var(--ed-line); background: #fff; cursor: pointer; text-align: center; color: var(--ed-ink);
+}
+.vs-aspect:hover { border-color: rgba(108, 102, 133, 0.35); }
+.vs-aspect.is-on { border-color: var(--ed-accent); box-shadow: 0 0 0 2px rgba(255, 67, 147, 0.18); }
+.vs-aspect-shape { height: 30px; max-width: 54px; border-radius: 4px; border: 2px solid currentColor; opacity: 0.55; margin-bottom: 4px; }
+.vs-aspect.is-on .vs-aspect-shape { color: var(--ed-accent); opacity: 1; }
+.vs-aspect strong { font-size: 0.82rem; }
+.vs-aspect small { font-size: 0.68rem; color: var(--ed-muted); line-height: 1.25; }

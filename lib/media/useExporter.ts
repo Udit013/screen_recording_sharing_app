@@ -18,6 +18,7 @@ export interface ExportOptions {
   audioFx?: AudioFx | null;
   output?: ExportOutput;
   captions?: ExportRequest["captions"];
+  look?: ExportRequest["look"];
 }
 
 /** Renders an edit in a worker. Object URLs are revoked on reset/unmount. */
@@ -80,6 +81,7 @@ export function useExporter() {
       audioFx: options.audioFx ?? null,
       output: options.output ?? "mp4",
       captions: options.captions ?? null,
+      look: options.look ?? null,
     };
     worker.postMessage(req);
   }, []);

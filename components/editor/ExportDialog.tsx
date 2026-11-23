@@ -5,6 +5,7 @@ import { useExporter } from "@/lib/media/useExporter";
 import { EXPORT_PRESETS, type ExportOutput, type ExportPreset } from "@/lib/media/export-presets";
 import { isFxActive, type AudioFx } from "@/lib/studio/fx";
 import { captionsForSegments, type Caption, type CaptionStyle } from "@/lib/studio/captions";
+import { isIdentityLook, type VideoLook } from "@/lib/studio/frame";
 import type { Range } from "@/lib/media/edl";
 import { formatDuration } from "@/lib/utils";
 import { useModal } from "@/lib/useModal";
@@ -20,6 +21,8 @@ interface ExportDialogProps {
   audioFx?: AudioFx | null;
   /** The caption track (source time) when "burn in" is on; null otherwise. */
   captions?: { captions: Caption[]; style: CaptionStyle } | null;
+  /** The Video tab's framing; rendered into MP4 exports. */
+  look?: VideoLook | null;
   onClose: () => void;
 }
 
@@ -28,7 +31,7 @@ const CODEC_NAMES: Record<string, string> = { avc: "H.264", vp9: "VP9", av1: "AV
 const codecName = (c: string | null) => (c ? CODEC_NAMES[c] ?? c : "");
 
 export default function ExportDialog({
-  videoUrl, title, segments, editedSeconds, selection = false, audioFx = null, captions = null, onClose,
+  videoUrl, title, segments, editedSeconds, selection = false, audioFx = null, captions = null, look = null, onClose,
 }: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>("720p");
   const [output, setOutput] = useState<ExportOutput>("mp4");
@@ -124,6 +127,7 @@ export default function ExportDialog({
                   output,
                   audioFx: fxAvailable && withFx ? audioFx : null,
                   captions: output === "mp4" && captionCount > 0 && withCaptions ? captions : null,
+                  look: output === "mp4" && look && !isIdentityLook(look) ? look : null,
                 })}
               >
                 {output === "mp4" ? "Render MP4" : "Render WAV"}

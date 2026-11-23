@@ -15,6 +15,7 @@ import type { Cut } from "@/lib/media/edl";
 import { isPauseLevel, type PauseLevel } from "@/lib/media/pauses";
 import { sanitizeAudioFx, type AudioFx } from "@/lib/studio/fx";
 import { sanitizeCaptionTrack, type CaptionTrack } from "@/lib/studio/captions";
+import { sanitizeLook, type VideoLook } from "@/lib/studio/frame";
 
 /** Upper bound when the stored duration is unknown: matches LIMITS (24 h). */
 const UNKNOWN_DURATION = 86_400;
@@ -43,6 +44,8 @@ export interface EditorData {
   audioFx: AudioFx | null;
   /** Saved caption track (source-time captions + style), validated on the way out. */
   captions: CaptionTrack | null;
+  /** Saved framing/colour settings, validated on the way out. */
+  look: VideoLook | null;
 }
 
 /** Everything the editor needs, for the owner only. */
@@ -71,6 +74,7 @@ export async function getEditorData(videoId: string): Promise<EditorData | null>
     pauseLevel: row.edl?.pauseLevel ?? null,
     audioFx: row.edl?.audioFx ? sanitizeAudioFx(row.edl.audioFx) : null,
     captions: row.edl?.captions ? sanitizeCaptionTrack(row.edl.captions, row.duration ?? UNKNOWN_DURATION) : null,
+    look: row.edl?.look ? sanitizeLook(row.edl.look) : null,
   };
 }
 
@@ -108,11 +112,11 @@ export async function saveWordTranscript(
 }
 
 /**
- * Stores the edit: the cut list, the Audio Studio settings and the caption
- * track. Settings and text only; the source asset is never touched and
+ * Stores the edit: the cut list, the Audio Studio settings, the caption
+ * track and the video framing. Settings and text only; the source asset is never touched and
  * rendered media is never stored.
  *
- * `audioFx` and `captions` are optional: a caller that omits one (an editor
+ * `audioFx`, `captions` and `look` are optional: a caller that omits one (an editor
  * page loaded before that field existed) keeps whatever is stored instead of
  * wiping it. Pass null to clear it.
  */
@@ -121,14 +125,15 @@ export async function saveEdit(
   cuts: unknown,
   pauseLevel: unknown,
   audioFx?: unknown,
-  captions?: unknown
+  captions?: unknown,
+  look?: unknown
 ): Promise<{ cutCount: number }> {
   const { userId, maxDuration } = await requireOwnedVideo(videoId);
   const clean = sanitizeCuts(cuts, maxDuration);
   const level = isPauseLevel(pauseLevel) ? pauseLevel : null;
 
   let stored: StoredEdl | null = null;
-  if (audioFx === undefined || captions === undefined) {
+  if (audioFx === undefined || captions === undefined || look === undefined) {
     const [row] = await db
       .select({ edl: videos.edl })
       .from(videos)
@@ -143,10 +148,12 @@ export async function saveEdit(
       : captions === null
         ? null
         : sanitizeCaptionTrack(captions, maxDuration);
+  const frame: VideoLook | null =
+    look === undefined ? stored?.look ?? null : look === null ? null : sanitizeLook(look);
 
   await db
     .update(videos)
-    .set({ edl: { version: 1, cuts: clean, pauseLevel: level, audioFx: fx, captions: track }, updatedAt: new Date() })
+    .set({ edl: { version: 1, cuts: clean, pauseLevel: level, audioFx: fx, captions: track, look: frame }, updatedAt: new Date() })
     .where(and(eq(videos.videoId, videoId), eq(videos.userId, userId)));
 
   revalidatePath(`/video/${videoId}`);

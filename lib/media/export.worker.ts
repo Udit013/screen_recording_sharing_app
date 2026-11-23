@@ -38,6 +38,7 @@ import { defaultFx, fadeGainAt, isFxActive, type AudioFx } from "@/lib/studio/fx
 import { WavWriter } from "@/lib/studio/wav";
 import { captionAt, captionsForSegments, sanitizeCaptionStyle, type Caption, type CaptionStyle } from "@/lib/studio/captions";
 import { drawCaption, loadCaptionFont } from "@/lib/studio/captionRender";
+import { drawFrame, isIdentityLook, outputSize, sanitizeLook, type VideoLook } from "@/lib/studio/frame";
 import {
   EXPORT_PRESETS,
   type ExportEvent,
@@ -292,12 +293,15 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     const audioUsable = !!aTrack && (await aTrack.canDecode());
 
     // Output size: only ever downscale, keep aspect ratio, even dimensions.
+    // A reframe (Video tab) sets its own shape; the preset bounds its short side.
     const srcW = await vTrack.getDisplayWidth();
     const srcH = await vTrack.getDisplayHeight();
     const cfg = EXPORT_PRESETS[preset];
+    const look: VideoLook | null = msg.data.look ? sanitizeLook(msg.data.look) : null;
+    const framed = !!look && !isIdentityLook(look);
     const scale = cfg.maxHeight && srcH > cfg.maxHeight ? cfg.maxHeight / srcH : 1;
-    const width = even(srcW * scale);
-    const height = even(srcH * scale);
+    const size = framed ? outputSize(srcW, srcH, look!, cfg.maxHeight) : { width: even(srcW * scale), height: even(srcH * scale) };
+    const { width, height } = size;
 
     // Negotiate codecs the device can actually encode. AAC isn't available
     // for encoding everywhere (e.g. Firefox), so Opus is the fallback.
@@ -312,20 +316,21 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
         })
       : null;
 
-    // Burned-in captions: composite each frame on a canvas at output size.
-    let burn: { captions: Caption[]; style: CaptionStyle; ctx: OffscreenCanvasRenderingContext2D; canvas: OffscreenCanvas } | null = null;
-    if (msg.data.captions && msg.data.captions.captions.length > 0) {
-      if (typeof OffscreenCanvas === "undefined") throw new Error("This browser can't burn in captions (no OffscreenCanvas).");
-      const style = sanitizeCaptionStyle(msg.data.captions.style);
-      const mapped = captionsForSegments(msg.data.captions.captions, segments);
-      if (mapped.length > 0) {
-        const canvas = new OffscreenCanvas(width, height);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("This browser can't burn in captions (no 2D canvas in workers).");
-        // Same font files as the preview; falls back to a system font if offline.
-        await loadCaptionFont(style, self.location.origin);
-        burn = { captions: mapped, style, ctx, canvas };
-      }
+    // Compositing (framing and/or burned-in captions): each frame is drawn
+    // on a canvas at output size by the same code as the preview.
+    const caps = msg.data.captions && msg.data.captions.captions.length > 0
+      ? { captions: captionsForSegments(msg.data.captions.captions, segments), style: sanitizeCaptionStyle(msg.data.captions.style) }
+      : null;
+    const captionsToBurn: { captions: Caption[]; style: CaptionStyle } | null = caps && caps.captions.length > 0 ? caps : null;
+    let burn: { ctx: OffscreenCanvasRenderingContext2D; canvas: OffscreenCanvas } | null = null;
+    if (framed || captionsToBurn) {
+      if (typeof OffscreenCanvas === "undefined") throw new Error("This browser can't composite video in the background (no OffscreenCanvas).");
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("This browser can't composite video in the background (no 2D canvas in workers).");
+      // Same font files as the preview; falls back to a system font if offline.
+      if (captionsToBurn) await loadCaptionFont(captionsToBurn.style, self.location.origin);
+      burn = { ctx, canvas };
     }
 
     const output = new Output({
@@ -348,7 +353,7 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
     await output.start();
 
     const editedSeconds = segments.reduce((s, r) => s + (r.end - r.start), 0);
-    post({ type: "start", output: outputKind, width, height, videoCodec, audioCodec, editedSeconds, audioProcessed: processAudio && !!audioCodec, captionsBurned: burn?.captions.length ?? 0 });
+    post({ type: "start", output: outputKind, width, height, videoCodec, audioCodec, editedSeconds, audioProcessed: processAudio && !!audioCodec, captionsBurned: captionsToBurn?.captions.length ?? 0 });
 
     // Progress is driven by the video track (the expensive one).
     let videoDone = 0;
@@ -384,14 +389,21 @@ self.onmessage = async (msg: MessageEvent<ExportRequest>) => {
           const editedLen = visibleEnd - visibleStart;
           if (burn) {
             // Draw the frame once per hold step, with the caption as it is at
-            // that moment; a long-held frame becomes several short ones.
-            const steps = Math.max(1, Math.ceil(editedLen / MAX_HOLD - 0.5));
+            // that moment; a long-held frame becomes several short ones. With
+            // framing alone nothing changes during a hold, so one is enough.
+            const steps = captionsToBurn ? Math.max(1, Math.ceil(editedLen / MAX_HOLD - 0.5)) : 1;
             for (let k = 0; k < steps; k++) {
               const t0 = editedStart + (editedLen * k) / steps;
               const t1 = editedStart + (editedLen * (k + 1)) / steps;
-              const { ctx, canvas, captions: caps, style } = burn;
-              sample.draw(ctx, 0, 0, width, height);
-              drawCaption(ctx, captionAt(caps, t0), t0, style, width, height);
+              const { ctx, canvas } = burn;
+              if (framed) {
+                ctx.clearRect(0, 0, width, height);
+                drawFrame(ctx, (c, sx, sy, sw, sh, dx, dy, dw, dh) => sample.draw(c, sx, sy, sw, sh, dx, dy, dw, dh),
+                  sample.displayWidth, sample.displayHeight, look!, width, height);
+              } else {
+                sample.draw(ctx, 0, 0, width, height);
+              }
+              if (captionsToBurn) drawCaption(ctx, captionAt(captionsToBurn.captions, t0), t0, captionsToBurn.style, width, height);
               const frame = new VideoSample(canvas, { timestamp: t0, duration: t1 - t0 });
               await videoSource.add(frame);
               frame.close();

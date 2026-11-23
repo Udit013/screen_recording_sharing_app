@@ -9,7 +9,8 @@ import { docHistoryReducer, initialDocHistory } from "@/lib/studio/doc";
 import { fadeGainAt, untouchedFx, type AudioFx } from "@/lib/studio/fx";
 import { usePreviewFx } from "@/lib/studio/usePreviewFx";
 import { emptyCaptionTrack, toEditedCaptions, type CaptionTrack } from "@/lib/studio/captions";
-import { useCaptionOverlay } from "@/lib/studio/useCaptionOverlay";
+import { useStageRenderer } from "@/lib/studio/useStageRenderer";
+import { defaultLook, isIdentityLook, sanitizeLook, type VideoLook } from "@/lib/studio/frame";
 import {
   clipSegments, keptSegments, mergeRanges, nextPlayableTime, isInsideCut, roundMs, sourceToEdited, subtractRange, summarizeEdit,
   type Cut, type Range,
@@ -21,6 +22,7 @@ import Timeline from "./Timeline";
 import TranscriptPane, { type PauseMarker } from "./TranscriptPane";
 import ExportDialog from "./ExportDialog";
 import CaptionStudio from "./CaptionStudio";
+import VideoStudio from "./VideoStudio";
 import AudioStudio from "./AudioStudio";
 
 type Ready = Extract<AnalysisState, { status: "ready" }>;
@@ -46,12 +48,14 @@ function saveErrorMessage(err: unknown): string {
   return msg.length > 120 ? `${msg.slice(0, 117)}…` : msg;
 }
 
-type SideTab = "transcript" | "captions" | "audio";
+type SideTab = "transcript" | "captions" | "video" | "audio";
 const SIDE_TABS: { id: SideTab; label: string }[] = [
   { id: "transcript", label: "Transcript" },
   { id: "captions", label: "Captions" },
+  { id: "video", label: "Video" },
   { id: "audio", label: "Audio" },
 ];
+const identityLook = defaultLook();
 const secs = (t: number) => (t >= 60 ? clock(t) : `${t.toFixed(1)}s`);
 
 /**
@@ -147,14 +151,16 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   // One undoable document: the cut list and the Audio Studio settings.
   const initialFx = useMemo(() => data.audioFx ?? untouchedFx(), [data.audioFx]);
   const initialCaptions = useMemo(() => data.captions ?? emptyCaptionTrack(), [data.captions]);
+  const initialLook = useMemo(() => (data.look ? sanitizeLook(data.look) : defaultLook()), [data.look]);
   const [history, dispatch] = useReducer(
     docHistoryReducer,
-    { cuts: data.cuts, fx: initialFx, captions: initialCaptions },
+    { cuts: data.cuts, fx: initialFx, captions: initialCaptions, look: initialLook },
     initialDocHistory
   );
   const cuts = history.present.cuts;
   const fx = history.present.fx;
   const captions = history.present.captions;
+  const look = history.present.look;
   const presentRef = useRef(history.present);
   useEffect(() => { presentRef.current = history.present; });
   const merged = useMemo(() => mergeRanges(cuts, duration), [cuts, duration]);
@@ -181,6 +187,16 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
         type: "commit",
         value: { ...presentRef.current, captions: next },
         mergeKey: mergeKey ? `cap:${mergeKey}` : undefined,
+        at: performance.now(),
+      }),
+    []
+  );
+  const setLook = useCallback(
+    (next: VideoLook, mergeKey?: string) =>
+      dispatch({
+        type: "commit",
+        value: { ...presentRef.current, look: next },
+        mergeKey: mergeKey ? `look:${mergeKey}` : undefined,
         at: performance.now(),
       }),
     []
@@ -271,21 +287,21 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [mode, setMode] = useState<"edited" | "original">("edited");
 
-  // Captions over the preview, drawn by the same renderer as the export. In
-  // "Original" mode they're shown at their source times, uncut.
+  // The stage: framing and captions, drawn by the same renderers as the
+  // export. In "Original" mode captions are shown at their source times.
   const captionCanvasRef = useRef<HTMLCanvasElement>(null);
   const sortedSourceCaptions = useMemo(
     () => [...captions.captions].sort((a, b) => a.start - b.start),
     [captions.captions]
   );
-  useCaptionOverlay(
-    videoRef,
-    captionCanvasRef,
-    mode === "edited" ? editedCaptions : sortedSourceCaptions,
-    captions.style,
-    mode === "edited" ? merged : null,
-    captions.burnIn && captions.captions.length > 0
-  );
+  useStageRenderer(videoRef, captionCanvasRef, {
+    captions: mode === "edited" ? editedCaptions : sortedSourceCaptions,
+    style: captions.style,
+    merged: mode === "edited" ? merged : null,
+    showCaptions: captions.burnIn && captions.captions.length > 0,
+    // "Original" shows the recording as it is; the framing is part of the edit.
+    look: mode === "edited" ? look : identityLook,
+  });
   const mergedRef = useRef(merged);
   const modeRef = useRef(mode);
   const editedDurationRef = useRef(summary.editedDuration);
@@ -425,13 +441,13 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   const [save, setSave] = useState<{ status: "saved" | "saving" | "error"; message?: string }>({ status: "saved" });
   const [retryTick, setRetryTick] = useState(0);
   const saveLevel = level === "off" || level === "custom" ? null : level;
-  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel, initialFx, initialCaptions]));
+  const sentKeyRef = useRef<string | null>(JSON.stringify([data.cuts, data.pauseLevel, initialFx, initialCaptions, initialLook]));
   const seqRef = useRef(0);
   const inFlightRef = useRef(0);
 
   // The edit waiting for the debounce. Kept in a ref so leaving the editor
   // through an in-app link (which beforeunload never sees) can still send it.
-  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null; fx: AudioFx; captions: CaptionTrack } | null>(null);
+  const pendingRef = useRef<{ key: string; cuts: Cut[]; level: PauseLevel | null; fx: AudioFx; captions: CaptionTrack; look: VideoLook } | null>(null);
 
   const sendPending = useCallback(() => {
     const p = pendingRef.current;
@@ -440,7 +456,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
     sentKeyRef.current = p.key;
     const seq = ++seqRef.current;
     inFlightRef.current++;
-    saveEdit(data.videoId, p.cuts, p.level, p.fx, p.captions)
+    saveEdit(data.videoId, p.cuts, p.level, p.fx, p.captions, p.look)
       .then(() => { if (seq === seqRef.current) setSave({ status: "saved" }); })
       .catch((err) => {
         if (seq !== seqRef.current) return;
@@ -451,7 +467,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
   }, [data.videoId]);
 
   useEffect(() => {
-    const key = JSON.stringify([cuts, saveLevel, fx, captions]);
+    const key = JSON.stringify([cuts, saveLevel, fx, captions, look]);
     if (key === sentKeyRef.current) {
       // e.g. an edit undone before it was sent: nothing new to store.
       pendingRef.current = null;
@@ -459,10 +475,10 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
       return;
     }
     setSave({ status: "saving" });
-    pendingRef.current = { key, cuts, level: saveLevel, fx, captions };
+    pendingRef.current = { key, cuts, level: saveLevel, fx, captions, look };
     const timer = setTimeout(sendPending, 700);
     return () => clearTimeout(timer);
-  }, [cuts, saveLevel, fx, captions, retryTick, sendPending]);
+  }, [cuts, saveLevel, fx, captions, look, retryTick, sendPending]);
 
   // Unmount (navigating away inside the app): send what the debounce held.
   useEffect(() => () => sendPending(), [sendPending]);
@@ -697,6 +713,8 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
               >
                 {t.label}
                 {t.id === "audio" && fx.enabled && !bypass && <span className="ed-tab-dot" aria-label="(effects on)" />}
+                {t.id === "video" && !isIdentityLook(look) && <span className="ed-tab-dot" aria-label="(reframed)" />}
+                {t.id === "captions" && captions.burnIn && captions.captions.length > 0 && <span className="ed-tab-dot" aria-label="(captions on)" />}
               </button>
             ))}
           </div>
@@ -803,6 +821,10 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
               )
             )}
           </div>
+          ) : sideTab === "video" ? (
+          <div className="ed-tabpanel is-scroll" role="tabpanel" id="ed-panel-video" aria-labelledby="ed-tab-video">
+            <VideoStudio look={look} onChange={setLook} />
+          </div>
           ) : sideTab === "captions" ? (
           <div className="ed-tabpanel is-scroll" role="tabpanel" id="ed-panel-captions" aria-labelledby="ed-tab-captions">
             <CaptionStudio
@@ -859,6 +881,7 @@ function Workspace({ data, analysis }: { data: EditorData; analysis: Ready }) {
           selection={exportJob.selection}
           editedSeconds={exportJob.segments.reduce((s, r) => s + (r.end - r.start), 0)}
           audioFx={fx}
+          look={look}
           captions={captions.burnIn && captions.captions.length > 0 ? { captions: captions.captions, style: captions.style } : null}
           onClose={() => setExportJob(null)}
         />
