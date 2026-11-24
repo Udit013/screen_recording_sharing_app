@@ -2598,3 +2598,61 @@ input[type="range"]::-moz-range-progress { background: linear-gradient(90deg, va
   .header .header-container aside a, .header .record .primary-btn { width: 100%; justify-content: center; padding: 11px 14px; gap: 8px; }
   .header .header-container aside a span, .header .record .primary-btn span { overflow: visible; white-space: nowrap; text-overflow: clip; }
 }
+
+/* ── Video page (v4): glass panels around a slate player bezel ──────────── */
+.detail-header .user-info h1 { font-weight: 500; letter-spacing: -0.04em; font-size: clamp(1.7rem, 3.4vw, 2.5rem); line-height: 1.05; }
+.detail-header .cta .icon-btn, .detail-header .cta .edit-btn, .detail-header .cta .delete-btn, .detail-header .cta .bar, .detail-header .cta > button, .detail-header .cta .user-btn > button {
+  border-radius: 999px; border: 0; background: var(--sc-btn); box-shadow: var(--sc-btn-shadow);
+}
+.detail-header .cta .edit-btn { background: var(--sc-primary); box-shadow: var(--sc-primary-shadow); color: #fff; }
+.detail-header .cta .edit-btn img { filter: brightness(0) invert(1); }
+.detail-header .cta .delete-btn { color: var(--sc-rec); }
+/* The edit nudge: a glass strip with a blue indicator, in both themes. */
+.edit-nudge {
+  border: 0; border-radius: 22px; padding: 12px 14px 12px 16px;
+  background: linear-gradient(90deg, var(--sc-accent-soft), transparent 70%), var(--sc-surface);
+  backdrop-filter: var(--sc-glass-blur); -webkit-backdrop-filter: var(--sc-glass-blur); box-shadow: var(--sc-e1);
+}
+.edit-nudge-icon { border-radius: 50%; background: var(--sc-primary); color: #fff; box-shadow: var(--sc-primary-shadow); }
+.edit-nudge.is-edited .edit-nudge-icon { background: var(--sc-btn); color: var(--sc-ink-2); box-shadow: var(--sc-btn-shadow); }
+.edit-nudge-link, .edit-nudge-dismiss { border-radius: 999px; }
+/* The player sits in a slate bezel, like a monitor on the deck. */
+.video-details .content .video-player {
+  border-radius: 30px; padding: 0; background: #000;
+  box-shadow: 0 0 0 8px var(--sc-deck), 0 0 0 9px rgba(255, 255, 255, 0.08), var(--sc-e3);
+  margin: 9px;
+}
+.video-details .content .video-player video { border-radius: 30px; }
+.player-controls { border-radius: 0 0 30px 30px; padding: 30px 18px 12px; background: linear-gradient(transparent, rgba(5, 8, 13, 0.82)); }
+.player-big-play {
+  width: 76px; height: 76px; color: #1b2231; background: var(--sc-knob);
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.5), inset 0 -5px 8px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.4), 0 14px 30px -6px rgba(0, 0, 0, 0.7);
+}
+.player-big-play:hover { background: var(--sc-knob); filter: brightness(1.06); }
+.player-track::before { background: rgba(255, 255, 255, 0.18); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6); }
+.player-track-progress { background: linear-gradient(90deg, var(--sc-accent), var(--sc-led)); box-shadow: 0 0 8px rgba(45, 226, 230, 0.5); }
+.player-track-thumb { width: 16px; height: 16px; background: var(--sc-knob); border: 0; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 2px 5px rgba(0, 0, 0, 0.5); }
+.player-chapter-tick { background: rgba(45, 226, 230, 0.7); }
+.player-time { color: var(--sc-led); font-variant-numeric: tabular-nums; text-shadow: 0 0 8px rgba(45, 226, 230, 0.5); }
+.player-time-sep { color: rgba(45, 226, 230, 0.5); }
+.player-speed, .player-ts-btn { border-radius: 999px; }
+/* Details: a glass panel whose tabs are a recessed button bank. */
+.video-details .video-info {
+  padding: 14px; border-radius: 28px; background: var(--sc-surface); box-shadow: var(--sc-e2);
+  backdrop-filter: var(--sc-glass-blur); -webkit-backdrop-filter: var(--sc-glass-blur); align-self: flex-start;
+}
+.video-info [role="tablist"] { border: 0; gap: 2px; padding: 4px; border-radius: 999px; background: var(--sc-well); box-shadow: var(--sc-inset); }
+.video-info [role="tablist"] button { flex: 1 0 auto; padding: 8px 12px; border: 0 !important; border-radius: 999px; color: var(--sc-muted); }
+.video-info [role="tablist"] button:hover { color: var(--sc-ink); }
+.video-info [role="tablist"] button[aria-selected="true"] { color: #fff; background: var(--sc-primary); box-shadow: var(--sc-primary-shadow); }
+.video-info [role="tabpanel"] { padding: 4px 6px; }
+.video-info .tag { border-radius: 999px; background: var(--sc-accent-soft); color: var(--sc-accent); }
+.transcript-search, .comment-input { border-radius: 16px; border: 0; background: var(--sc-well); box-shadow: var(--sc-inset); }
+/* Comments: a glass panel with a recessed composer. */
+.comments-section { padding: 18px; border-radius: 28px; background: var(--sc-surface); box-shadow: var(--sc-e1); backdrop-filter: var(--sc-glass-blur); -webkit-backdrop-filter: var(--sc-glass-blur); }
+.comments-title { font-weight: 500; letter-spacing: -0.02em; }
+.comment-post-btn { border-radius: 999px; background: var(--sc-primary); box-shadow: var(--sc-primary-shadow); color: #fff; }
+.comment-timestamp { border-radius: 999px; background: var(--sc-accent-soft); color: var(--sc-accent); }
+.video-info [role="tablist"] { scrollbar-width: none; }
+.video-info [role="tablist"]::-webkit-scrollbar { display: none; }
+.video-info [role="tablist"] button { flex: 1 1 auto; padding: 7px 8px; font-size: 0.78rem; }

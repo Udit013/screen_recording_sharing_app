@@ -2639,4 +2639,5 @@ The current look, appended last in `globals.css` ("v4: visionOS-style spatial gl
   - Segmented controls and the pause-level keys are a button bank; the selected key's LED lights up.
   - The editor's play button is a domed metal key; the clock is a cyan LED readout; the playhead glows cyan.
   - Buttons are pills; primary actions are solid blue with a glow.
+- **Video page.** The player sits in a slate bezel with a domed metal play key, a blue→cyan scrub bar with a metal thumb and an LED-style time readout. The details panel and comments are glass panels; the details tabs are a recessed button bank with the selected tab lit blue. Header actions are pills (Edit is the blue key), and the edit nudge is a glass strip in both themes.
 - **Performance.** Blur is applied to a bounded set of panels, not to every element, and there is no new dependency.
