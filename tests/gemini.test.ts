@@ -1,11 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 // A retired model used to fail silently for every video. These tests pin down
-// the behaviour that would have caught it: fall through on a retired model,
-// stop on errors a different model can't fix, and always say what failed.
+// the behaviour that would have caught it, plus the free-tier economics:
+// one request per video, JSON mode, quota cooldowns, and compact input.
 
 const generateContent = vi.fn();
-const getGenerativeModel = vi.fn((_opts: { model: string }) => ({ generateContent }));
+const getGenerativeModel = vi.fn((_opts: { model: string; generationConfig?: Record<string, unknown> }) => ({ generateContent }));
 
 vi.mock("@google/generative-ai", () => ({
   GoogleGenerativeAI: class {
@@ -13,8 +13,10 @@ vi.mock("@google/generative-ai", () => ({
   },
 }));
 
-const reply = (text: string) => ({ response: { text: () => text } });
-const httpError = (status: number, message = "boom") => Object.assign(new Error(message), { status });
+const reply = (obj: unknown) => ({ response: { text: () => (typeof obj === "string" ? obj : JSON.stringify(obj)) } });
+const httpError = (status: number, extra: Record<string, unknown> = {}) => Object.assign(new Error("boom"), { status, ...extra });
+const CONTEXT = "Title: Deploying a Next.js app to Vercel\nDescription: A walkthrough of setting up environment variables and previews for every pull request.";
+const timed = (n: number) => Array.from({ length: n }, (_, i) => ({ seconds: i * 5, text: `sentence number ${i} about deploying the app and checking previews` }));
 
 describe("gemini client", () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -31,78 +33,105 @@ describe("gemini client", () => {
 
   const load = () => import("@/lib/gemini");
 
-  it("defaults to models that are fast enough for a serverless request", async () => {
+  it("prefers Flash-Lite (higher free-tier limits) and falls back to larger models", async () => {
     const { geminiModels } = await load();
-    expect(geminiModels()).toEqual(["gemini-3.5-flash", "gemini-2.5-flash"]);
-  });
-
-  it("reads a comma-separated override and ignores blanks", async () => {
-    process.env.GEMINI_MODEL = " model-a , ,model-b ";
-    const { geminiModels } = await load();
+    expect(geminiModels()).toEqual(["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"]);
+    process.env.GEMINI_MODEL = "model-a, model-b";
     expect(geminiModels()).toEqual(["model-a", "model-b"]);
   });
 
-  it("returns the analysis from the first model when it works", async () => {
-    generateContent.mockResolvedValueOnce(reply('{"summary":"A demo.","tags":["demo","vercel"]}'));
-    const { analyzeVideoContent } = await load();
-    expect(await analyzeVideoContent("some content")).toEqual({ summary: "A demo.", tags: ["demo", "vercel"] });
-    expect(getGenerativeModel).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls through to the next model when one has been retired (404)", async () => {
-    generateContent
-      .mockRejectedValueOnce(httpError(404, "no longer available"))
-      .mockResolvedValueOnce(reply('```json\n{"summary":"Fine.","tags":["a"]}\n```'));
-    const { analyzeVideoContent } = await load();
-    expect(await analyzeVideoContent("content")).toEqual({ summary: "Fine.", tags: ["a"] });
-    expect(getGenerativeModel.mock.calls.map((c) => c[0].model)).toEqual(["gemini-3.5-flash", "gemini-2.5-flash"]);
-    // ...and the retirement is visible in the logs, not swallowed.
-    expect(errorSpy.mock.calls[0][0]).toContain("gemini-3.5-flash failed (HTTP 404)");
-  });
-
-  it("also falls through on quota (429) and outages (503)", async () => {
-    generateContent.mockRejectedValueOnce(httpError(429)).mockResolvedValueOnce(reply('{"summary":"ok","tags":[]}'));
-    const { analyzeVideoContent } = await load();
-    expect((await analyzeVideoContent("c"))?.summary).toBe("ok");
-  });
-
-  it("stops on an error another model can't fix, instead of burning quota", async () => {
-    generateContent.mockRejectedValueOnce(httpError(400, "API key not valid"));
-    const { analyzeVideoContent } = await load();
-    expect(await analyzeVideoContent("content")).toBeNull();
+  it("gets summary, tags and chapters in ONE JSON-mode request", async () => {
+    generateContent.mockResolvedValueOnce(reply({ summary: "A demo.", tags: ["Demo", "vercel"], chapters: [{ title: "Intro", timestamp: 3 }, { title: "Deploy", timestamp: 40 }] }));
+    const { analyzeVideo } = await load();
+    const r = await analyzeVideo({ context: CONTEXT, timed: timed(20), wantChapters: true, maxSeconds: 100 });
     expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(r).toEqual({ ok: { summary: "A demo.", tags: ["demo", "vercel"], chapters: [{ title: "Intro", timestamp: 0 }, { title: "Deploy", timestamp: 40 }] } });
+    const cfg = getGenerativeModel.mock.calls[0][0].generationConfig!;
+    expect(cfg.responseMimeType).toBe("application/json");
+    expect(cfg.maxOutputTokens).toBeLessThanOrEqual(900);
   });
 
-  it("returns null (and logs) when every model fails", async () => {
-    generateContent.mockRejectedValue(httpError(404));
-    const { analyzeVideoContent } = await load();
-    expect(await analyzeVideoContent("content")).toBeNull();
-    expect(errorSpy).toHaveBeenCalledTimes(2);
+  it("doesn't ask for chapters without a timed transcript or when the owner wrote their own", async () => {
+    generateContent.mockResolvedValue(reply({ summary: "S", tags: ["a"] }));
+    const { analyzeVideo } = await load();
+    const r1 = await analyzeVideo({ context: CONTEXT, wantChapters: true, maxSeconds: 60 });
+    const r2 = await analyzeVideo({ context: CONTEXT, timed: timed(20), wantChapters: false, maxSeconds: 60 });
+    expect(r1).toEqual({ ok: { summary: "S", tags: ["a"], chapters: null } });
+    expect(r2).toEqual({ ok: { summary: "S", tags: ["a"], chapters: null } });
+    for (const call of generateContent.mock.calls) expect(String(call[0])).not.toContain('"chapters"');
   });
 
-  it("returns null and logs when the reply isn't JSON", async () => {
-    generateContent.mockResolvedValueOnce(reply("Sorry, I can't do that."));
-    const { analyzeVideoContent } = await load();
-    expect(await analyzeVideoContent("content")).toBeNull();
-    expect(errorSpy.mock.calls.at(-1)?.[0]).toContain("not valid JSON");
+  it("falls through to the next model on retirement or quota, and cools those models down", async () => {
+    generateContent
+      .mockRejectedValueOnce(httpError(404))
+      .mockRejectedValueOnce(httpError(429, { errorDetails: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "37s" }] }))
+      .mockResolvedValueOnce(reply({ summary: "ok", tags: [] }));
+    const { analyzeVideo, availableModels } = await load();
+    const r = await analyzeVideo({ context: CONTEXT, wantChapters: false, maxSeconds: 0 });
+    expect(r).toEqual({ ok: { summary: "ok", tags: [], chapters: null } });
+    expect(getGenerativeModel.mock.calls.map((c) => c[0].model)).toEqual(["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]);
+    // The retired and rate-limited models are skipped on the next request…
+    expect(availableModels()).toEqual(["gemini-2.5-flash", "gemini-3.1-flash-lite"]);
+    // …the 429 one only until its retry time, the retired one for a day.
+    expect(availableModels(Date.now() + 38_000)).toEqual(["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"]);
   });
 
-  it("makes no request without a key or without content", async () => {
-    const { analyzeVideoContent, isGeminiConfigured } = await load();
-    expect(await analyzeVideoContent("   ")).toBeNull();
+  it("reports quota exhaustion without spending requests while every model is cooling down", async () => {
+    generateContent.mockRejectedValue(httpError(429));
+    const { analyzeVideo } = await load();
+    expect(await analyzeVideo({ context: CONTEXT, wantChapters: false, maxSeconds: 0 })).toEqual({ failure: "quota" });
+    const calls = generateContent.mock.calls.length;
+    expect(await analyzeVideo({ context: CONTEXT, wantChapters: false, maxSeconds: 0 })).toEqual({ failure: "quota" });
+    expect(generateContent.mock.calls.length).toBe(calls); // no new requests
+  });
+
+  it("rests an overloaded (503) model briefly", async () => {
+    generateContent.mockRejectedValueOnce(httpError(503)).mockResolvedValueOnce(reply({ summary: "ok", tags: [] }));
+    const { analyzeVideo, availableModels } = await load();
+    expect("ok" in (await analyzeVideo({ context: CONTEXT, wantChapters: false, maxSeconds: 0 }))).toBe(true);
+    expect(availableModels()[0]).toBe("gemini-3.5-flash");
+    expect(availableModels(Date.now() + 31_000)[0]).toBe("gemini-3.5-flash-lite");
+  });
+
+  it("stops on errors another model can't fix, and logs which model failed", async () => {
+    generateContent.mockRejectedValueOnce(httpError(400));
+    const { analyzeVideo } = await load();
+    expect(await analyzeVideo({ context: CONTEXT, wantChapters: false, maxSeconds: 0 })).toEqual({ failure: "error" });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(String(errorSpy.mock.calls[0][0])).toContain("gemini-3.5-flash-lite");
+  });
+
+  it("skips content too short to summarise, and needs a key", async () => {
+    const { analyzeVideo, isGeminiConfigured } = await load();
+    expect(await analyzeVideo({ context: "Title: hi", wantChapters: false, maxSeconds: 0 })).toEqual({ failure: "skipped" });
+    expect(generateContent).not.toHaveBeenCalled();
     delete process.env.GEMINI_API_KEY;
     expect(isGeminiConfigured()).toBe(false);
-    expect(await analyzeVideoContent("content")).toBeNull();
-    expect(generateContent).not.toHaveBeenCalled();
   });
 
-  it("clamps and orders chapters from the model", async () => {
-    generateContent.mockResolvedValueOnce(
-      reply('[{"title":"Intro","timestamp":5},{"title":"Deploy","timestamp":40},{"title":"Late","timestamp":999},{"title":"Dup","timestamp":40}]')
-    );
-    const { generateChapters } = await load();
-    const chapters = await generateChapters("[0] hi\n[40] deploy", 60);
-    expect(chapters?.[0]).toEqual({ title: "Intro", timestamp: 0 }); // first chapter starts at 0
-    expect(chapters?.map((c) => c.timestamp)).toEqual([0, 40, 60]); // de-duplicated, clamped to duration
+  it("handles invalid JSON as a failure", async () => {
+    generateContent.mockResolvedValueOnce(reply("not json"));
+    const { analyzeVideo } = await load();
+    expect(await analyzeVideo({ context: CONTEXT, wantChapters: false, maxSeconds: 0 })).toEqual({ failure: "error" });
+  });
+});
+
+describe("compact transcript and chapter validation", async () => {
+  const { compactTranscript, cleanChapters } = await import("@/lib/gemini");
+
+  it("merges lines into blocks and keeps the whole video within the budget", () => {
+    const lines = Array.from({ length: 2000 }, (_, i) => ({ seconds: i * 3, text: `line ${i} with a fair amount of spoken words in it` }));
+    const out = compactTranscript(lines, 12000);
+    expect(out.length).toBeLessThanOrEqual(12000 + 200);
+    expect(out.startsWith("[0] line 0")).toBe(true);
+    // The last block is near the end of the video (not cut off at the start).
+    const last = Number(/\[(\d+)\][^\n]*$/.exec(out)![1]);
+    expect(last).toBeGreaterThan(5000);
+  });
+
+  it("validates chapters", () => {
+    expect(cleanChapters([{ title: "B", timestamp: 50 }, { title: "A", timestamp: 5 }, { title: "", timestamp: 9 }, { title: "C", timestamp: 999 }], 100))
+      .toEqual([{ title: "A", timestamp: 0 }, { title: "B", timestamp: 50 }, { title: "C", timestamp: 100 }]);
+    expect(cleanChapters("nope", 10)).toBeNull();
   });
 });

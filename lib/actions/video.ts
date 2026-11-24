@@ -10,7 +10,6 @@ import {
   eq,
   getTableColumns,
   gt,
-  inArray,
   isNotNull,
   isNull,
   lt,
@@ -21,7 +20,7 @@ import { auth } from "@/lib/auth";
 import { doesContentMatch, getOrderByClause } from "@/lib/utils";
 import { getSignedUploadParams, deleteCloudinaryResource, deleteCloudinaryPrefix } from "@/lib/cloudinary";
 import { SHARE_TOKEN_EXPIRY_DAYS } from "@/constants";
-import { analyzeVideoContent, generateChapters, isGeminiConfigured } from "@/lib/gemini";
+import { analyzeVideo } from "@/lib/gemini";
 import {
   requiredString,
   assertVisibility,
@@ -34,6 +33,10 @@ import { assertVideoReadable } from "@/lib/authz";
 // Comfortably above Vercel's serverless function limit (60s max on Hobby),
 // so a run that is still alive can never be reclaimed out from under itself.
 const PROCESSING_STALE_MS = 2 * 60 * 1000;
+// A failed run (quota, outage) is retried on a later view, but not sooner
+// than this: retrying on every page view would burn free-tier requests while
+// the quota is exhausted. processingStartedAt records when it failed.
+const FAILED_RETRY_MS = 10 * 60 * 1000;
 
 const revalidatePaths = (paths: string[]) =>
   paths.forEach((path) => revalidatePath(path));
@@ -332,7 +335,11 @@ export const processVideoAI = withError(async (videoId: string) => {
       and(
         eq(videos.videoId, videoId),
         or(
-          inArray(videos.processingStatus, ["idle", "failed"]),
+          eq(videos.processingStatus, "idle"),
+          and(
+            eq(videos.processingStatus, "failed"),
+            or(isNull(videos.processingStartedAt), lt(videos.processingStartedAt, new Date(now.getTime() - FAILED_RETRY_MS)))
+          ),
           and(
             eq(videos.processingStatus, "processing"),
             or(
@@ -361,29 +368,21 @@ export const processVideoAI = withError(async (videoId: string) => {
     const hasManualChapters = (existing.chapters?.length ?? 0) > 0;
     const wantsChapters = !hasManualChapters && segments.length > 0;
 
-    // The two Gemini calls are independent, so they run concurrently rather
-    // than back to back — roughly halving total AI latency on a video that
-    // gets both. Both helpers swallow their own errors and resolve to null,
-    // so Promise.all cannot reject here (which is why a failure has to be
-    // detected from the null result below).
-    const [aiResult, aiChapters] = await Promise.all([
-      analyzeVideoContent(context),
-      wantsChapters
-        ? generateChapters(
-            segments
-              .map((s) => `[${vttTimeToSeconds(s.time)}] ${s.text}`)
-              .join("\n"),
-            existing.duration ?? 0
-          )
-        : Promise.resolve(null),
-    ]);
+    // One request for summary, tags and chapters together (see lib/gemini.ts).
+    const result = await analyzeVideo({
+      context,
+      timed: segments.map((s) => ({ seconds: vttTimeToSeconds(s.time), text: s.text })),
+      wantChapters: wantsChapters,
+      maxSeconds: existing.duration ?? 0,
+    });
+    const aiResult = "ok" in result ? result.ok : null;
+    const aiChapters = aiResult?.chapters ?? null;
 
-    // A configured AI that returned nothing for real content failed (a retired
-    // model, quota, an outage). Recording that as "ready" is permanent, since
-    // ready videos are never reprocessed, and it hid exactly this: a retired
-    // model left every video without a summary. "failed" is retried the next
-    // time the video is opened. Without a key there is nothing to retry.
-    const aiFailed = isGeminiConfigured() && context.trim().length > 0 && aiResult === null;
+    // A configured AI that failed for real content (a retired model, quota,
+    // an outage) is recorded as "failed" with the time, and retried on a
+    // later view after FAILED_RETRY_MS. Recording it as "ready" would be
+    // permanent. Content too short to summarise, or no key, is "ready".
+    const aiFailed = !("ok" in result) && result.failure !== "skipped" && Boolean(process.env.GEMINI_API_KEY);
 
     await db
       .update(videos)
@@ -392,7 +391,7 @@ export const processVideoAI = withError(async (videoId: string) => {
         tags: aiResult?.tags?.length ? aiResult.tags : (existing.tags ?? []),
         chapters: aiChapters ?? existing.chapters ?? [],
         processingStatus: aiFailed ? "failed" : "ready",
-        processingStartedAt: null,
+        processingStartedAt: aiFailed ? new Date() : null,
         updatedAt: new Date(),
       })
       .where(eq(videos.videoId, videoId));

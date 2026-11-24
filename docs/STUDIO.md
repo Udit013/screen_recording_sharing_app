@@ -302,6 +302,22 @@ Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**,
 - Hindi spelling errors are common on proper nouns and English loanwords.
 - Filler words aren't transcribed reliably in any language.
 
+## AI usage (Gemini free tier)
+
+Gemini writes a video's summary, tags and chapters, and nothing else. Editing, transcription, separation and pitch correction never call it. The goal is to make the free tier go as far as possible (`lib/gemini.ts`):
+
+| Change | Effect |
+|---|---|
+| Summary + tags + chapters in **one** request | Half the requests per video (was 2) |
+| Flash-Lite first: 3.5-flash-lite → 3.5-flash → 2.5-flash → 3.1-flash-lite | Lite models have higher free-tier limits; checked live: 1.2–1.7 s, valid JSON |
+| JSON mode, temperature 0.2, capped output (400/900 tokens), minimal thinking | Replies parse first time (a parse failure used to cost a retry); short, cheap responses |
+| Quota-aware fallback | A 429 rests that model until its `retryDelay` (else 60 s); 500/503 rests it 30 s; 404 (retired) for a day. While every model rests, no request is sent |
+| Failed videos retry after 10 minutes, not on every view | No request burned on each page view while the quota is out |
+| Compact input: transcript merged into ≥15 s blocks within 12 000 characters, covering the whole video | Fewer input tokens; long videos keep their late chapters (the old 9 000-character cut lost them) |
+| Videos with too little text (< 12 words) are skipped | No request for nothing |
+
+The model list stays configurable with `GEMINI_MODEL` (comma-separated). When this was checked live, `gemini-2.5-flash-lite` was listed by the API but retired (404), which is why defaults are verified rather than assumed.
+
 ## What is implemented, and what is not
 
 **Implemented and verified in exported files**
