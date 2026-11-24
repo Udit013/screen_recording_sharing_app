@@ -41,7 +41,7 @@ Every claim in this document is grounded in the actual code in this repository a
 29. [The One-Take Editor](#29-the-one-take-editor)
 30. [Accessibility and responsive baseline](#30-accessibility-and-responsive-baseline)
 31. [SnapCast Studio: audio, captions, video, conversion](#31-snapcast-studio-audio-captions-video-conversion)
-32. [Design system and branding](#32-design-system-and-branding)
+32. [Design system, branding, app shell and themes](#32-design-system-and-branding)
 
 ---
 
@@ -2581,3 +2581,45 @@ The design layer restyles the existing shared classes in place, so there's no se
   - `applicationName`: "SnapCast Studio".
   - `themeColor`: #15112b.
   - Open Graph and Twitter titles and descriptions now cover captions, languages, the audio studio and conversion.
+
+### 32.5 App shell and navigation (v3)
+
+The top bar was replaced by an app shell (`components/Navbar.tsx` with `app/(root)/layout.tsx`). It's one component with three CSS-only layouts:
+
+| Width | Layout |
+|---|---|
+| ≥ 1200 px | A fixed **sidebar** (252 px): brand, an **Upload** call-to-action, the sections (Library, My videos, Collections, Convert), and at the bottom the theme switch and an account card (avatar, name, sign out) |
+| 900–1199 px, and the Studio editor at any width | A 76 px **icon rail** with the same items, so the editor gets the width |
+| < 900 px | A compact top bar (brand, theme, avatar) and a floating **bottom tab bar** within thumb reach, with active states, press feedback and safe-area insets |
+
+**Page structure:**
+- Library and profile headers are a "hero" panel: an uppercase accent eyebrow, a large Satoshi Black title, and tactile actions.
+- The video grid is four columns at 1500 px and up, with 16:9 thumbnails.
+- Upload and Convert content sit on raised panels.
+- The player has spatial depth.
+
+**Studio editor:**
+- A two-pane workspace from 1180 px: the stage deck on the left, and a sticky tool panel on the right that scrolls on its own.
+- A sticky translucent toolbar (title, save status, undo/redo, export).
+
+**Motion:** content eases in (0.32 s), buttons press 1 px and tabs scale on press, all disabled under `prefers-reduced-motion`.
+
+**Bug fixed along the way:** transcript words were rendered with no whitespace between them, so a sentence couldn't wrap in a narrow panel and copied text ran together. `TranscriptPane` now emits real spaces.
+
+### 32.6 Light and dark themes
+
+- **Choosing a theme.** `components/ThemeToggle.tsx` offers Light, Dark and System. The choice is saved in `localStorage` (`snapcast-theme`); System follows the OS setting live.
+- **No flash.** An inline script in `<head>` (`THEME_SCRIPT`, `app/layout.tsx`) sets `data-theme` on `<html>` before first paint, so the wrong theme never shows.
+- **The CSS.** `:root[data-theme="dark"]` redefines the `--sc-*` tokens:
+  - surfaces: canvas #0c0a17, surface #17132a, surface-2 #1e1936;
+  - ink #f2eefc and muted #a59ec6, about 7:1 on the surface;
+  - a brighter accent, #ff4f95;
+  - darker elevation shadows;
+  - dark wells, tracks and knobs;
+  - `color-scheme: dark`, so native controls follow.
+- **How everything themes.**
+  - Every colour in `globals.css` now goes through tokens. The hard-coded hexes were converted mechanically.
+  - Translucent greys use RGB-triplet tokens (`rgb(var(--sc-muted-rgb) / α)`), so their opacities are preserved in both themes.
+  - Tailwind's `bg-white` became `bg-surface`, and the legacy theme colours map to the tokens.
+- **The studio deck** stays dark in both themes and gets darker in dark mode, so it still reads as the stage.
+- **Browser chrome.** `theme-color` follows the system setting via media-qualified viewport metadata.
