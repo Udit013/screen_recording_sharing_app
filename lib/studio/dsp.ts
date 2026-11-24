@@ -30,6 +30,11 @@
 //     head restarts (at zero gain) it searches up to 12.5 ms for the offset
 //     whose waveform best matches the other head, so the crossfade adds no
 //     phase jump and the output pitch is exact. Formants shift with pitch.
+//   - Pitch correction: YIN pitch detection (de Cheveigné & Kawahara, 2002)
+//     on a 2× downsampled mono copy every 512 samples; the nearest note of
+//     the chosen key/scale (with hysteresis) sets a target, the correction in
+//     cents is scaled by strength and smoothed by the retune time, and it
+//     drives the same shifter with a time-varying ratio.
 
 /* eslint-disable no-var -- `var` keeps the injected worklet source free of
    block-scoping transforms the compiler might otherwise emit. */
@@ -42,6 +47,10 @@ export interface EngineMeter {
   outPeak: number;
   /** Largest gain reduction from the compressor and limiter, in dB (≥ 0). */
   reductionDb: number;
+  /** Pitch correction: last detected pitch in Hz (0 = unvoiced), target note (MIDI) and applied correction in cents. */
+  pitchHz?: number;
+  targetMidi?: number;
+  correctionCents?: number;
 }
 
 export interface AudioEngine {
@@ -165,9 +174,90 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
   var PSW = Math.round(0.06 * SR);       // sweep: how far a head's delay travels in one grain
   var PSK = Math.round(0.0125 * SR);     // splice search range (one period of 80 Hz)
   var PSC = Math.round(0.01 * SR);       // correlation window
-  var PSN = PSW + PSK + PSC + 8;
+  // Pitch correction reads the delay line this far back, so the audio being
+  // corrected is the audio the detector just analysed (its window's centre
+  // plus half a hop). Measured without it: correction trailed 5 Hz vibrato
+  // and removed little of it.
+  var AT_HOP = 256;
+  var DLAG = Math.round((0.032 * SR + SR / 65) / 2) + AT_HOP / 2;
+  var PSN = PSW + PSK + PSC + DLAG + 8;
   var psL = new Float32Array(PSN), psR = new Float32Array(PSN), psM = new Float32Array(PSN), psPos = 0;
-  var psOn = false, psRatio = 1, psGrain = PSW;
+  var psOn = false, psRatio = 1, psGrain = PSW, psManual = 1;
+  // Pitch correction state. Grains are capped at 40 ms while correcting, so
+  // a ratio that changes from moment to moment stays inside the buffer.
+  var atOn = false, atStrength = 1, atAlpha = 1, atKey = 0, atAllowed = [true, true, true, true, true, true, true, true, true, true, true, true];
+  var GCAP = Math.round(0.04 * SR);
+  // Detector rate: decimated to ~16 kHz (×3 at 44.1/48 kHz), plenty for voice pitch.
+  var DEC = SR >= 32000 ? 3 : 2;
+  var DSR = SR / DEC, DW = Math.round(0.032 * DSR), TMIN = Math.max(2, Math.floor(DSR / 1000)), TMAX = Math.ceil(DSR / 65);
+  var DN = 2048; while (DN < DW + TMAX + 4) DN *= 2;
+  var det = new Float32Array(DN), detPos = 0, detHalf = 0, detCount = 0, detPrev = 0;
+  var yd = new Float64Array(TMAX + 2);
+  var atCents = 0, atTarget = -1, atHz = 0, atUnvoiced = 0;
+  var HOP = AT_HOP;
+  var AT_SCALES: Record<string, number[]> = {
+    chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
+    "harmonic-minor": [0, 2, 3, 5, 7, 8, 11], "major-pentatonic": [0, 2, 4, 7, 9], "minor-pentatonic": [0, 3, 5, 7, 10], blues: [0, 3, 5, 6, 7, 10],
+  };
+  function grainFor(r: number) {
+    var g = Math.abs(1 - r) < 1e-6 ? GCAP : PSW / Math.abs(1 - r);
+    return Math.max(PSC, atOn ? Math.min(g, GCAP) : g);
+  }
+  /** YIN on the newest DW + TMAX downsampled samples: f0 in Hz, or 0 when unvoiced. */
+  function yin() {
+    var start = detPos - (DW + TMAX);
+    var energy = 0;
+    for (var j = 0; j < DW; j++) { var x0 = det[(start + j + DN) & (DN - 1)]; energy += x0 * x0; }
+    if (energy / DW < 1e-5) return 0; // below about -50 dBFS: treat as silence
+    var run = 0, tau, best = -1;
+    yd[0] = 1;
+    for (tau = 1; tau <= TMAX; tau++) {
+      var sum = 0;
+      for (var k = 0; k < DW; k++) {
+        var df = det[(start + k + DN) & (DN - 1)] - det[(start + k + tau + DN) & (DN - 1)];
+        sum += df * df;
+      }
+      run += sum;
+      yd[tau] = run > 0 ? (sum * tau) / run : 1;
+      if (tau > TMIN && best < 0 && yd[tau - 1] < 0.15 && yd[tau - 1] <= yd[tau]) best = tau - 1;
+    }
+    if (best < 0) return 0;
+    // Parabolic interpolation around the dip.
+    var a = yd[best - 1], b = yd[best], c = yd[best + 1];
+    var den = a - 2 * b + c;
+    var t = den !== 0 ? best + (0.5 * (a - c)) / den : best;
+    return DSR / t;
+  }
+  /** Nearest allowed note (MIDI) to `midi`, keeping the current one unless clearly past it. */
+  function snap(midi: number) {
+    if (atTarget >= 0 && Math.abs(midi - atTarget) < 0.65) return atTarget;
+    var bestN = -1, bestD = 99;
+    for (var o = -7; o <= 7; o++) {
+      var n = Math.round(midi) + o;
+      if (!atAllowed[((n - atKey) % 12 + 12) % 12]) continue;
+      var d = Math.abs(n - midi);
+      if (d < bestD) { bestD = d; bestN = n; }
+    }
+    return bestN;
+  }
+  /** Runs every HOP samples while correcting: updates the shift ratio. */
+  function correctPitch() {
+    var f0 = yin();
+    atHz = f0;
+    var want = 0;
+    if (f0 > 0) {
+      atUnvoiced = 0;
+      var midi = 69 + 12 * Math.log(f0 * psManual / 440) / Math.LN2;
+      atTarget = snap(midi);
+      want = atTarget >= 0 ? (atTarget - midi) * 100 * atStrength : 0;
+      atCents += (want - atCents) * atAlpha;
+    } else {
+      // Hold through short consonants, then let go.
+      if (++atUnvoiced * HOP > 0.12 * SR) { atTarget = -1; atCents += (0 - atCents) * atAlpha; }
+    }
+    psRatio = psManual * Math.pow(2, atCents / 1200);
+    psGrain = grainFor(psRatio);
+  }
   var hdD = [0, 0], hdAge = [0, 0.5];
   function psAt(buf: Float32Array, d: number) {
     var f = psPos - d;
@@ -196,7 +286,9 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
    * indexing on a mono copy keeps a splice well under one render quantum.
    */
   function psSplice(other: number) {
-    var base = psRatio > 1 ? PSW : 0;      // pitch up: start far back and catch up; down: start near and fall back
+    // Pitch up: start far enough back to catch up for one grain; down: start near and fall back.
+    // While correcting, everything sits DLAG further back (see DLAG).
+    var base = (atOn ? DLAG : 0) + (psRatio > 1 ? Math.min(PSW, Math.ceil((psRatio - 1) * psGrain) + 2) : 0);
     var od = Math.round(hdD[other]);
     var best = base, bestScore = -Infinity, k, sc;
     for (k = 0; k <= PSK; k += 3) {
@@ -212,7 +304,7 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
     return best + (hdD[other] - od); // keep the other head's sub-frame phase
   }
   function psResetHeads() {
-    var base = psRatio > 1 ? PSW : 0;
+    var base = (atOn ? DLAG : 0) + (psRatio > 1 ? Math.min(PSW, Math.ceil((psRatio - 1) * psGrain) + 2) : 0);
     // Half a grain apart in age, and in delay: each at its own point of the sweep.
     hdAge[0] = 0; hdAge[1] = 0.5;
     hdD[0] = base; hdD[1] = base + (1 - psRatio) * psGrain * 0.5;
@@ -241,12 +333,25 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
     outGainT = dbToGain(fx.outputGainDb);
 
     var st = fx.pitch && fx.pitch.enabled ? fx.pitch.semitones : 0;
-    var wasOn = psOn;
-    psOn = st !== 0;
-    psRatio = Math.pow(2, st / 12);
-    // A grain lasts as long as a head takes to sweep PSW at this ratio.
-    psGrain = psOn ? Math.max(PSC, PSW / Math.abs(1 - psRatio)) : PSW;
-    if (psOn && !wasOn) psResetHeads();
+    var at = fx.autotune;
+    var wasOn = psOn, atWasOn = atOn;
+    atOn = !!at && at.enabled && at.strength > 0;
+    psOn = st !== 0 || atOn;
+    psManual = Math.pow(2, st / 12);
+    if (atOn) {
+      atStrength = Math.min(1, Math.max(0, at.strength));
+      atKey = ((Math.round(at.key) % 12) + 12) % 12;
+      var steps = AT_SCALES[at.scale] || AT_SCALES.chromatic;
+      for (var pc = 0; pc < 12; pc++) atAllowed[pc] = steps.indexOf(pc) >= 0;
+      // One-pole smoothing per hop: alpha = 1 - exp(-hop / retune time).
+      atAlpha = at.retuneMs <= 0 ? 1 : 1 - Math.exp(-(HOP / SR) / (at.retuneMs / 1000));
+    } else {
+      atCents = 0; atTarget = -1;
+    }
+    psRatio = psManual * Math.pow(2, atCents / 1200);
+    // A grain lasts as long as a head takes to sweep PSW at this ratio (capped while correcting).
+    psGrain = psOn ? grainFor(psRatio) : PSW;
+    if ((psOn && !wasOn) || atOn !== atWasOn) psResetHeads();
 
     hp.on = fx.highpass.enabled;
     designBiquad(hp, "highpass", fx.highpass.freq, Math.SQRT1_2, 0);
@@ -301,7 +406,10 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
     for (var j = 0; j < combsL.length; j++) { combsL[j].buf.fill(0); combsR[j].buf.fill(0); combsL[j].store = combsR[j].store = 0; combsL[j].pos = combsR[j].pos = 0; }
     for (var a = 0; a < apsL.length; a++) { apsL[a].buf.fill(0); apsR[a].buf.fill(0); apsL[a].pos = apsR[a].pos = 0; }
     preL.fill(0); preR.fill(0); prePos = 0;
-    psL.fill(0); psR.fill(0); psM.fill(0); psPos = 0; psResetHeads();
+    psL.fill(0); psR.fill(0); psM.fill(0); psPos = 0;
+    det.fill(0); detPos = 0; detHalf = 0; detCount = 0; detPrev = 0; atCents = 0; atTarget = -1; atUnvoiced = 0;
+    psRatio = psManual; psGrain = psOn ? grainFor(psRatio) : PSW;
+    psResetHeads();
     limBufL.fill(0); limBufR.fill(0); limPos = 0; dqHead = dqTail = 0; limN = 0; limGain = 1;
     inGain = inGainT; outGain = outGainT;
   }
@@ -317,6 +425,12 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
       l *= inGain; r *= inGain;
 
       if (psOn) {
+        if (atOn) {
+          // Decimate (boxcar average of DEC samples) into the detector's ring buffer.
+          detPrev += (l + r) * 0.5;
+          if (++detHalf === DEC) { det[detPos] = detPrev / DEC; detPos = (detPos + 1) & (DN - 1); detHalf = 0; detPrev = 0; }
+          if (++detCount >= HOP) { detCount = 0; correctPitch(); }
+        }
         psL[psPos] = l; psR[psPos] = r; psM[psPos] = l + r;
         var g0 = Math.sin(Math.PI * hdAge[0]); g0 *= g0;
         var g1 = 1 - g0;
@@ -436,9 +550,13 @@ export function createAudioEngine(sampleRate: number): AudioEngine {
     configure: configure,
     process: process,
     reset: reset,
-    latency: function () { return bypass ? 0 : (limOn ? DL : 0) + (psOn ? Math.round((PSW + PSK) / 2) : 0); },
+    latency: function () {
+      if (bypass) return 0;
+      var ps = !psOn ? 0 : atOn ? DLAG + Math.round(PSK / 2) : Math.round((PSW + PSK) / 2);
+      return (limOn ? DL : 0) + ps;
+    },
     readMeter: function () {
-      var m = { inPeak: mIn, outPeak: mOut, reductionDb: mRed };
+      var m = { inPeak: mIn, outPeak: mOut, reductionDb: mRed, pitchHz: atOn ? atHz : 0, targetMidi: atOn ? atTarget : -1, correctionCents: atOn ? atCents : 0 };
       mIn = 0; mOut = 0; mRed = 0;
       return m;
     },

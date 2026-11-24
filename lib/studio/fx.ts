@@ -31,6 +31,13 @@ export interface AudioFx {
    * Optional in stored data: settings saved before it existed load as off.
    */
   pitch: { enabled: boolean; semitones: number };
+  /**
+   * Automatic pitch correction: detects the sung pitch and pulls it to the
+   * nearest note of `key` + `scale`. `strength` scales the correction (0..1);
+   * `retuneMs` is how quickly it gets there (0 = instant, the hard "robotic"
+   * effect). Optional in stored data, like every newer field.
+   */
+  autotune: { enabled: boolean; key: number; scale: ScaleId; strength: number; retuneMs: number };
   compressor: {
     enabled: boolean;
     thresholdDb: number;
@@ -49,6 +56,20 @@ export interface AudioFx {
   /** Two-pass peak normalization, applied when exporting. */
   normalize: { enabled: boolean; targetDb: number };
 }
+
+export type ScaleId = "chromatic" | "major" | "minor" | "harmonic-minor" | "major-pentatonic" | "minor-pentatonic" | "blues";
+
+/** Pitch classes (semitones above the key) of each scale. */
+export const SCALES: Record<ScaleId, { label: string; steps: number[] }> = {
+  chromatic: { label: "Chromatic (all notes)", steps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+  major: { label: "Major", steps: [0, 2, 4, 5, 7, 9, 11] },
+  minor: { label: "Natural minor", steps: [0, 2, 3, 5, 7, 8, 10] },
+  "harmonic-minor": { label: "Harmonic minor", steps: [0, 2, 3, 5, 7, 8, 11] },
+  "major-pentatonic": { label: "Major pentatonic", steps: [0, 2, 4, 7, 9] },
+  "minor-pentatonic": { label: "Minor pentatonic", steps: [0, 3, 5, 7, 10] },
+  blues: { label: "Blues", steps: [0, 3, 5, 6, 7, 10] },
+};
+export const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 
 export interface Range {
   min: number;
@@ -79,6 +100,7 @@ export const RANGES = {
   makeupDb: { min: 0, max: 24, step: 0.5, unit: "dB" },
   delayMs: { min: 1, max: 1500, step: 1, unit: "ms" },
   semitones: { min: -12, max: 12, step: 0.1, unit: "st" },
+  retuneMs: { min: 0, max: 400, step: 5, unit: "ms" },
   feedback: { min: 0, max: 0.85, step: 0.01, unit: "" },
   mix: { min: 0, max: 1, step: 0.01, unit: "" },
   roomSize: { min: 0, max: 1, step: 0.01, unit: "" },
@@ -110,6 +132,7 @@ export const defaultFx = (): AudioFx => ({
   gate: { enabled: false, thresholdDb: -50, rangeDb: -40, attackMs: 2, releaseMs: 120 },
   eq: { enabled: false, bands: defaultBands() },
   pitch: { enabled: false, semitones: 0 },
+  autotune: { enabled: false, key: 0, scale: "major", strength: 1, retuneMs: 40 },
   compressor: { enabled: false, thresholdDb: -20, ratio: 3, kneeDb: 6, attackMs: 10, releaseMs: 150, makeupDb: 3 },
   delay: { enabled: false, timeMs: 320, feedback: 0.35, mix: 0.25, pingPong: false },
   reverb: { enabled: false, roomSize: 0.5, damping: 0.5, preDelayMs: 15, width: 1, mix: 0.2 },
@@ -138,6 +161,7 @@ export function isFxActive(fx: AudioFx | null | undefined): boolean {
     fx.gate.enabled ||
     (fx.eq.enabled && fx.eq.bands.some((b) => b.gainDb !== 0)) ||
     (fx.pitch.enabled && fx.pitch.semitones !== 0) ||
+    (fx.autotune.enabled && fx.autotune.strength > 0) ||
     fx.compressor.enabled ||
     fx.delay.enabled ||
     fx.reverb.enabled ||
@@ -180,7 +204,7 @@ export function sanitizeAudioFx(input: unknown): AudioFx {
   const d = defaultFx();
   const i = obj(input);
   const hp = obj(i.highpass), lp = obj(i.lowpass), g = obj(i.gate), eq = obj(i.eq);
-  const ps = obj(i.pitch);
+  const ps = obj(i.pitch), at = obj(i.autotune);
   const c = obj(i.compressor), dl = obj(i.delay), rv = obj(i.reverb), lim = obj(i.limiter), nz = obj(i.normalize);
   const rawBands = Array.isArray(eq.bands) ? eq.bands : [];
 
@@ -210,6 +234,13 @@ export function sanitizeAudioFx(input: unknown): AudioFx {
       }),
     },
     pitch: { enabled: bool(ps.enabled, false), semitones: num(ps.semitones, RANGES.semitones, 0) },
+    autotune: {
+      enabled: bool(at.enabled, false),
+      key: Math.round(num(at.key, { min: 0, max: 11, step: 1, unit: "" }, 0)),
+      scale: typeof at.scale === "string" && at.scale in SCALES ? (at.scale as ScaleId) : d.autotune.scale,
+      strength: num(at.strength, RANGES.mix, d.autotune.strength),
+      retuneMs: num(at.retuneMs, RANGES.retuneMs, d.autotune.retuneMs),
+    },
     compressor: {
       enabled: bool(c.enabled, false),
       thresholdDb: num(c.thresholdDb, RANGES.compThreshold, d.compressor.thresholdDb),
@@ -248,8 +279,8 @@ export function sanitizeAudioFx(input: unknown): AudioFx {
 
 // ── Presets ──────────────────────────────────────────────────────────────
 // Each preset is a real processing chain: a partial set of settings layered
-// over the defaults. Only "Deep Voice" shifts pitch; nothing here retunes to
-// a key (that would be pitch correction, which is not implemented).
+// over the defaults. Only "Deep Voice" shifts pitch. Pitch correction is a
+// separate section (autotune) because it needs the song's key.
 
 type Partial2<T> = { [K in keyof T]?: T[K] extends object ? (T[K] extends unknown[] ? T[K] : Partial<T[K]>) : T[K] };
 type FxPatch = Partial2<Omit<AudioFx, "version" | "eq">> & { eq?: { enabled?: boolean; gains?: number[] } };

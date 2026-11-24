@@ -15,7 +15,11 @@ export type FxPortMessage =
   | { type: "reset" };
 
 /** Messages the processor sends back (~20 per second while audio flows). */
-export type FxMeterMessage = { type: "meter"; inPeak: number; outPeak: number; reductionDb: number };
+export type FxMeterMessage = {
+  type: "meter"; inPeak: number; outPeak: number; reductionDb: number;
+  /** Pitch correction readout (0 / -1 when off or unvoiced). */
+  pitchHz: number; targetMidi: number; correctionCents: number;
+};
 
 let cachedUrl: string | null = null;
 
@@ -62,7 +66,7 @@ class SnapcastFxProcessor extends AudioWorkletProcessor {
         m.inPeak = Math.max(m.inPeak, p);
         m.outPeak = Math.max(m.outPeak, p);
       }
-      this.port.postMessage({ type: "meter", inPeak: m.inPeak, outPeak: m.outPeak, reductionDb: m.reductionDb });
+      this.port.postMessage({ type: "meter", inPeak: m.inPeak, outPeak: m.outPeak, reductionDb: m.reductionDb, pitchHz: m.pitchHz || 0, targetMidi: m.targetMidi == null ? -1 : m.targetMidi, correctionCents: m.correctionCents || 0 });
     }
     return true;
   }

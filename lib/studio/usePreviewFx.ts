@@ -15,6 +15,10 @@ export interface PreviewMeter {
   inPeak: number;
   outPeak: number;
   reductionDb: number;
+  /** Pitch correction readout: detected Hz (0 = none), target MIDI note (-1 = none), correction in cents. */
+  pitchHz?: number;
+  targetMidi?: number;
+  correctionCents?: number;
 }
 
 /**

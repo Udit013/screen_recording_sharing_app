@@ -301,3 +301,112 @@ describe("pitch shift", () => {
     expect(sanitizeAudioFx({ pitch: { enabled: true, semitones: 99 } }).pitch.semitones).toBe(12);
   });
 });
+
+describe("automatic pitch correction", () => {
+  // A voice-like tone: fundamental plus decaying harmonics, so it has a clear pitch.
+  const tone = (freqAt: (t: number) => number, seconds: number, amp = 0.3) => {
+    const x = new Float32Array(Math.round(seconds * SR));
+    let ph = 0;
+    for (let i = 0; i < x.length; i++) {
+      ph += (2 * Math.PI * freqAt(i / SR)) / SR;
+      x[i] = amp * (Math.sin(ph) + 0.5 * Math.sin(2 * ph) + 0.25 * Math.sin(3 * ph));
+    }
+    return x;
+  };
+  /** Strongest frequency near `near` over [from, to) seconds (Goertzel scan, 0.25 Hz steps). */
+  const peakHz = (x: Float32Array, near: number, from: number, to: number) => {
+    let best = 0, bestF = 0;
+    for (let f = near * 0.85; f <= near * 1.15; f += 0.25) {
+      const w = (2 * Math.PI * f) / SR, c = 2 * Math.cos(w);
+      let s1 = 0, s2 = 0;
+      for (let i = Math.round(from * SR); i < Math.round(to * SR); i++) { const s0 = x[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+      const p = s1 * s1 + s2 * s2 - c * s1 * s2;
+      if (p > best) { best = p; bestF = f; }
+    }
+    return bestF;
+  };
+  const tune = (patch: Partial<AudioFx["autotune"]>) => bare({ autotune: { enabled: true, key: 0, scale: "major", strength: 1, retuneMs: 0, ...patch } });
+  const cents = (f: number, ref: number) => 1200 * Math.log2(f / ref);
+
+  it("pulls a sharp note to the nearest note of the key", () => {
+    const out = run(tune({}), tone(() => 452, 2)).L; // A4 + 46 cents
+    expect(Math.abs(cents(peakHz(out, 440, 0.5, 2), 440))).toBeLessThan(5);
+  });
+
+  it("respects the scale: 475 Hz goes to A♯ in chromatic, to B in C major", () => {
+    const chrom = run(tune({ scale: "chromatic" }), tone(() => 475, 2)).L;
+    const major = run(tune({ scale: "major" }), tone(() => 475, 2)).L;
+    expect(Math.abs(cents(peakHz(chrom, 466.16, 0.5, 2), 466.16))).toBeLessThan(6);
+    expect(Math.abs(cents(peakHz(major, 493.88, 0.5, 2), 493.88))).toBeLessThan(6);
+  });
+
+  it("respects the key: in D major, F (349 Hz) is corrected to F♯", () => {
+    const out = run(tune({ key: 2 }), tone(() => 352, 2)).L;
+    expect(Math.abs(cents(peakHz(out, 369.99, 0.5, 2), 369.99))).toBeLessThan(6);
+  });
+
+  it("half strength corrects half the way", () => {
+    const out = run(tune({ strength: 0.5 }), tone(() => 452, 2)).L;
+    const c = cents(peakHz(out, 446, 0.5, 2), 440);
+    expect(c).toBeGreaterThan(17);
+    expect(c).toBeLessThan(29); // input is +46 cents; half is +23
+  });
+
+  it("flattens vibrato around a note: the corrected pitch holds steady", () => {
+    // ±35 cents of 5 Hz vibrato around A4.
+    const vib = (t: number) => 440 * Math.pow(2, (35 * Math.sin(2 * Math.PI * 5 * t)) / 1200);
+    const input = tone(vib, 3);
+    const out = run(tune({ retuneMs: 0 }), input).L;
+    // Pitch track (autocorrelation, 40 ms frames) in cents from A4.
+    const track = (y: Float32Array) => {
+      const c: number[] = [];
+      for (let s = SR; s + 2048 < y.length; s += 960) {
+        let best = 0, bl = 0;
+        for (let lag = 80; lag < 140; lag++) { let r = 0; for (let i = 0; i < 1920; i++) r += y[s + i] * y[s + i + lag]; if (r > best) { best = r; bl = lag; } }
+        let a = 0, b = 0, cc = 0;
+        for (let i = 0; i < 1920; i++) { a += y[s + i] * y[s + i + bl - 1]; b += y[s + i] * y[s + i + bl]; cc += y[s + i] * y[s + i + bl + 1]; }
+        c.push(1200 * Math.log2(SR / (bl + (0.5 * (a - cc)) / (a - 2 * b + cc)) / 440));
+      }
+      return c;
+    };
+    const sd = (v: number[]) => { const m = v.reduce((p, q) => p + q, 0) / v.length; return Math.sqrt(v.reduce((p, q) => p + (q - m) ** 2, 0) / v.length); };
+    const before = sd(track(input)), after = sd(track(out));
+    expect(before).toBeGreaterThan(20);
+    expect(after).toBeLessThan(5); // measured 2.4 cents
+    expect(Math.abs(track(out).reduce((p, q) => p + q, 0) / track(out).length)).toBeLessThan(3);
+  });
+
+  it("slower retune takes longer to arrive", () => {
+    const fast = run(tune({ retuneMs: 0 }), tone(() => 452, 1.5)).L;
+    const slow = run(tune({ retuneMs: 300 }), tone(() => 452, 1.5)).L;
+    // In the first 150 ms after the detector settles, the slow setting is still near the input pitch.
+    const early = (x: Float32Array) => cents(peakHz(x, 446, 0.08, 0.23), 440);
+    expect(early(fast)).toBeLessThan(10);
+    expect(early(slow)).toBeGreaterThan(20);
+    // Both end up on the note.
+    expect(Math.abs(cents(peakHz(slow, 440, 1, 1.5), 440))).toBeLessThan(6);
+  });
+
+  it("combines with a manual shift, leaves silence silent, and reports what it heard", () => {
+    const out = run(bare({ pitch: { enabled: true, semitones: 12 }, autotune: { enabled: true, key: 0, scale: "major", strength: 1, retuneMs: 0 } }), tone(() => 226, 2)).L;
+    expect(Math.abs(cents(peakHz(out, 440, 0.5, 2), 440))).toBeLessThan(6); // 226 × 2 = 452 → A4
+    const silent = run(tune({}), new Float32Array(SR));
+    expect(peak(silent.L)).toBe(0);
+    const e = createAudioEngine(SR);
+    run(tune({}), tone(() => 452, 1), 128, e);
+    const m = e.readMeter();
+    expect(m.pitchHz).toBeGreaterThan(445);
+    expect(m.pitchHz).toBeLessThan(459);
+    expect(m.targetMidi).toBe(69);
+    expect(m.correctionCents).toBeLessThan(-40);
+  });
+
+  it("validates settings and loads older settings without it", () => {
+    const s = sanitizeAudioFx({ autotune: { enabled: true, key: 15, scale: "lydian", strength: 3, retuneMs: -5 } });
+    expect(s.autotune).toEqual({ enabled: true, key: 11, scale: "major", strength: 1, retuneMs: 0 });
+    const old = JSON.parse(JSON.stringify(defaultFx())) as Record<string, unknown>;
+    delete old.autotune;
+    expect(sanitizeAudioFx(old).autotune.enabled).toBe(false);
+    expect(isFxActive(tune({}))).toBe(true);
+  });
+});

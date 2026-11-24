@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Section, Slider, Switch } from "./studio-ui";
 import { createAudioEngine } from "@/lib/studio/dsp";
 import {
-  applyPatch, defaultFx, DELAY_PRESETS, EQ_PRESETS, PRESETS, RANGES, REVERB_PRESETS, sanitizeAudioFx,
+  applyPatch, defaultFx, DELAY_PRESETS, EQ_PRESETS, NOTE_NAMES, PRESETS, RANGES, REVERB_PRESETS, sanitizeAudioFx, SCALES, type ScaleId,
   untouchedFx, type AudioFx, type EqBandType,
 } from "@/lib/studio/fx";
 import type { PreviewFxStatus, PreviewMeter } from "@/lib/studio/usePreviewFx";
@@ -190,6 +190,38 @@ export default function AudioStudio({ fx, onChange, bypass, onBypassChange, prev
               <button type="button" className="as-chip" onClick={() => update("pitch0", (d) => { d.pitch = { enabled: false, semitones: 0 }; })}>Reset</button>
             )}
           </div>
+        </Section>
+
+        <Section title="Pitch correction" enabled={fx.autotune.enabled}
+          onToggle={(v) => update("atOn", (d) => { d.autotune.enabled = v; })}
+          summary={fx.autotune.enabled ? `${NOTE_NAMES[fx.autotune.key]} ${SCALES[fx.autotune.scale].label.toLowerCase()} · ${Math.round(fx.autotune.strength * 100)}%` : "Off"}>
+          <p className="as-help-block">
+            Detects the sung note and pulls it to the nearest note of the key you choose. Fast retune gives the hard,
+            robotic effect; slower settings keep slides and vibrato more natural. Works on a single voice; chords and
+            noisy backgrounds confuse the pitch detector.
+          </p>
+          <div className="as-row">
+            <label htmlFor="at-key">Key</label>
+            <select id="at-key" className="as-select" value={fx.autotune.key}
+              onChange={(e) => update("atKey", (d) => { d.autotune.key = Number(e.target.value); d.autotune.enabled = true; })}>
+              {NOTE_NAMES.map((n, i) => <option key={n} value={i}>{n}</option>)}
+            </select>
+          </div>
+          <div className="as-row">
+            <label htmlFor="at-scale">Scale</label>
+            <select id="at-scale" className="as-select" value={fx.autotune.scale}
+              onChange={(e) => update("atScale", (d) => { d.autotune.scale = e.target.value as ScaleId; d.autotune.enabled = true; })}>
+              {(Object.keys(SCALES) as ScaleId[]).map((k) => <option key={k} value={k}>{SCALES[k].label}</option>)}
+            </select>
+          </div>
+          <Slider label="Strength" value={fx.autotune.strength} range={RANGES.mix} format={fmtPct}
+            help="How much of the way to the target note each note is pulled."
+            onChange={(v) => update("atStr", (d) => { d.autotune.strength = v; d.autotune.enabled = true; })} />
+          <Slider label="Retune speed" value={fx.autotune.retuneMs} range={RANGES.retuneMs}
+            format={(v) => (v === 0 ? "Instant (robotic)" : `${Math.round(v)} ms`)}
+            help="Time to reach the target note. 0 ms snaps instantly; 50–150 ms sounds natural."
+            onChange={(v) => update("atSpd", (d) => { d.autotune.retuneMs = v; d.autotune.enabled = true; })} />
+          {fx.autotune.enabled && <PitchReadout meterRef={meterRef} />}
         </Section>
 
         <Section title="Clean up" enabled={fx.highpass.enabled || fx.lowpass.enabled || fx.gate.enabled}
@@ -420,4 +452,28 @@ function LevelMeter({ meterRef }: { meterRef: RefObject<PreviewMeter> }) {
       <span className="as-meter-gr"><span ref={grRef} /></span>
     </div>
   );
+}
+
+/** Live pitch-correction readout from the preview worklet (≈20 updates a second). */
+function PitchReadout({ meterRef }: { meterRef: RefObject<PreviewMeter> }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const m = meterRef.current, el = ref.current;
+      if (el) {
+        const hz = m?.pitchHz ?? 0, t = m?.targetMidi ?? -1, c = m?.correctionCents ?? 0;
+        if (hz > 0 && t >= 0) {
+          const name = `${NOTE_NAMES[((t % 12) + 12) % 12]}${Math.floor(t / 12) - 1}`;
+          el.textContent = `Hearing ${hz.toFixed(0)} Hz → ${name}, correcting ${c > 0 ? "+" : ""}${c.toFixed(0)} cents`;
+        } else {
+          el.textContent = "Play the video to see the detected pitch.";
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [meterRef]);
+  return <p ref={ref} className="as-pitch" aria-live="off" />;
 }

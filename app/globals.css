@@ -1870,3 +1870,11 @@ body {
 .ex-audio-opts label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; font-weight: 700; color: var(--ed-muted); }
 .ex-audio-opts select { font: inherit; font-size: 0.85rem; font-weight: 600; color: var(--ed-ink); padding: 7px 10px; border-radius: 10px; border: 1px solid var(--ed-line); background: #fff; }
 .ex-audio-opts small { flex-basis: 100%; font-size: 0.78rem; color: var(--ed-muted); }
+.cv-stems { display: flex; flex-direction: column; gap: 10px; }
+.cv-stems input[type="range"] { width: 100%; max-width: 360px; accent-color: var(--ed-accent); }
+.cv-db { font-size: 0.75rem; color: var(--ed-muted); margin: -6px 0 0 170px; }
+.cv-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 700; }
+.cv-inline select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--ed-line); }
+@media (max-width: 760px) { .cv-db { margin-left: 0; } }
+.as-help-block { font-size: 0.75rem; color: var(--ed-muted); line-height: 1.4; margin: 0; }
+.as-pitch { font-size: 0.78rem; font-weight: 700; color: var(--ed-ink); font-variant-numeric: tabular-nums; background: var(--ed-soft); border-radius: 8px; padding: 6px 8px; margin: 0; }

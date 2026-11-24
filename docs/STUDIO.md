@@ -206,6 +206,58 @@ The **Convert** page (`/convert`) works on any local file, and nothing is upload
   - **Bitrate** is a target. AAC uses fewer bits than requested on very simple material such as a pure tone, so estimates are an upper bound there.
   - **Memory:** files are decoded in memory. Practical limits are about 30 minutes of audio with a visualizer, longer without one.
 
+## Vocal / instrumental separation
+
+In **Convert → Vocals / Instrumental**, any local song or video can be split into vocals and instrumental on the device. You can play a live remix with independent levels (or either part solo) and download vocals, instrumental or the remix as MP3/M4A/Opus/WAV.
+
+- **Model.** Spleeter 2-stems (Deezer, **MIT**), int8 ONNX export by the sherpa-onnx project (**Apache-2.0**). It is two U-Nets, about 26 MB each, downloaded once from Hugging Face and kept in Cache Storage. It runs in a worker on onnxruntime-web (WASM, MIT); onnxruntime-web is now a declared dependency, at the same version transformers.js already used. No API, no quota.
+- **Signal path** (`lib/studio/separate.ts`, pure TypeScript):
+  1. STFT: Hann 4096, hop 1024, 44.1 kHz.
+  2. The models run on blocks of 512 frames × 1024 bins.
+  3. Ratio masks are applied to the full complex STFT, then an inverse STFT.
+- **Differences from the reference implementation:**
+  - The reference zeroes everything above 11 kHz; SnapCast extends the masks there instead, so cymbals and air survive.
+  - Blocks are processed one at a time, so memory stays bounded.
+  - Tests prove vocals + accompaniment = input exactly, whatever the models output.
+- **Measured.** Synthetic speech over a synthetic music bed, SDR against the true stems, in the browser:
+
+  | Stem | Unseparated mix | Separated |
+  |---|---|---|
+  | Vocals | 3.9 dB | **11.2 dB** |
+  | Instrumental | −3.9 dB | **7.4 dB** |
+
+  - Remixing both stems at 0 dB reconstructs the original at 56 dB SDR.
+  - Speed: 8× real time in the browser (single-threaded WASM) and 19× in Node.
+  - With onnxruntime-node the same mix scored 7.5 / 3.7 dB. The int8 kernels differ between runtimes.
+- **Limitations:**
+  - Spleeter is a 2019 model, so expect audible bleed: reverb tails and some instruments leak into the vocals. Demucs separates better but is several times larger and slower in a browser.
+  - The whole file is decoded in memory (about 30 minutes at most).
+  - Results are reused within the session; they aren't stored on the server.
+  - Separating a video's *original* audio into editable tracks inside the editor is not built yet. It needs stems that follow the cut list.
+
+## Pitch correction
+
+**Audio → Pitch correction** in the editor: pick a key and scale (chromatic, major, natural/harmonic minor, major/minor pentatonic, blues), a strength and a retune speed. A live readout shows the detected pitch, the target note and the correction. It combines with the manual pitch shift.
+
+- **How it works** (inside the shared engine, so preview and export match):
+  1. YIN pitch detection runs on a 16 kHz decimated mono copy every 256 samples (65–1000 Hz).
+  2. The nearest note of the chosen key and scale is picked, with hysteresis so the target doesn't flicker between neighbours.
+  3. The correction in cents is scaled by strength and smoothed by the retune time (0 ms = instant, robotic).
+  4. It drives the WSOLA pitch shifter with a time-varying ratio.
+  5. Short unvoiced gaps hold the correction, then release it.
+- **Delay alignment.** The shifter reads the audio exactly as far back as the detector's analysis window, so each correction lands on the audio it was computed for.
+  - Without this, correction trailed 5 Hz vibrato and removed little of it (23 → 18 cents spread).
+  - With it, the spread drops to 3 cents.
+  - This adds about 25 ms of latency, which exports compensate.
+- **Measured:**
+  - Unit tests: a 452 Hz tone in C major lands within 5 cents of A4. 475 Hz goes to A♯ in chromatic and to B in C major. In D major, F goes to F♯. Half strength corrects half-way. A slow retune arrives later.
+  - Exported WAV: a sharp note with vibrato moved from +46 to −0.9 cents mean. 475 Hz moved from −67.5 to −0.4 cents.
+  - Cost: worst 128-sample block 0.37 ms of the 2.67 ms real-time budget.
+- **Limitations:**
+  - It is monophonic: one voice. Chords, doubled vocals or loud backing confuse the detector (separate the vocals first).
+  - Formants shift with the correction; this is fine for small corrections.
+  - There is no note-by-note graphical editing.
+
 ## Transcription languages
 
 Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**, **English**, **Hindi**, **Sanskrit** or **Hinglish** (mixed). Everything runs in the browser with OpenAI Whisper weights (MIT) via transformers.js (Apache-2.0):
@@ -268,7 +320,6 @@ Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**,
 
 | Feature | Why / what it needs |
 |---|---|
-| Pitch correction ("autotune"): pitch detection, key and scale, retune speed | Needs a pitch tracker (e.g. YIN) driving a time-varying shift. The shifter above is the building block; detection and scale snapping are not built. Nothing in the UI is called autotune. |
 | Formant-preserving pitch shift | Needs spectral-envelope processing (e.g. LPC or a phase vocoder). |
 | Automatic ducking (music dips under speech) | Track levels are manual today. |
 | Text and image overlays | Fits the existing `drawFrame` → canvas path, but there is no overlay model or UI yet. |
@@ -304,6 +355,8 @@ Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**,
 |---|---|
 | next 15.5.28, react / react-dom 19.1.0 | MIT |
 | @mediabunny/mp3-encoder 1.62.1 | MPL-2.0 (bundles the LGPL LAME encoder as WebAssembly) |
+| onnxruntime-web 1.31.0-dev (already used by transformers.js) | MIT |
+| Spleeter 2-stems weights (Deezer), ONNX export by sherpa-onnx | MIT (weights), Apache-2.0 (export) |
 | mediabunny 1.62.1 | MPL-2.0. Used unmodified; file-level copyleft applies only to changes to its own files |
 | @huggingface/transformers 4.3.1 | Apache-2.0 |
 | drizzle-orm 0.45.4 | Apache-2.0 |
@@ -324,7 +377,7 @@ Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**,
 | **Vercel** | Hosting | Any Node host works (`next start`) |
 | **Google OAuth** | Sign-in | Yes, today (the only provider configured) |
 | **Google Gemini** | AI summaries and chapters only. Never editing | Optional |
-| **Hugging Face Hub, jsDelivr** | First-time download of the Whisper models (41 MB English, ~240 MB multilingual) and the ONNX WASM runtime, then cached | Yes, today |
+| **Hugging Face Hub, jsDelivr** | First-time download of the Spleeter models (~52 MB), the Whisper models (41 MB English, ~240 MB multilingual) and the ONNX WASM runtime, then cached | Yes, today |
 | **Cloudinary (added audio)** | Uploaded music / voiceover / effect files for the Tracks tab | Yes, when tracks are used |
 
 ## Self-hosting migration plan
