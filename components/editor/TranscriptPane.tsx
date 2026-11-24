@@ -107,7 +107,9 @@ const SentenceRow = memo(function SentenceRow({
         onPointerEnter={(e) => { if (e.buttons === 1) onWordEnter(i); }}
       >
         {words[i].text}
-      </span>
+      </span>,
+      // A real space between words: lets lines wrap, and copied text reads as words.
+      " "
     );
     const pause = pauses.find((p) => p.after === i);
     if (pause) {

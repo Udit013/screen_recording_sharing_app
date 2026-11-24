@@ -116,14 +116,14 @@ const SharePage = async ({ params }: SharePageProps) => {
         />
 
         {video.description && (
-          <div className="bg-white rounded-18 p-6 shadow-10">
+          <div className="bg-surface rounded-18 p-6 shadow-10">
             <h3 className="text-sm font-medium text-gray-100 mb-2">Description</h3>
             <p className="text-dark-100 font-semibold">{video.description}</p>
           </div>
         )}
 
         {video.aiSummary && (
-          <div className="bg-white rounded-18 p-6 shadow-10">
+          <div className="bg-surface rounded-18 p-6 shadow-10">
             <h3 className="text-sm font-medium text-gray-100 mb-2">AI Summary</h3>
             <p className="text-dark-100">{video.aiSummary}</p>
             {video.tags && video.tags.length > 0 && (

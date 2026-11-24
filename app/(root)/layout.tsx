@@ -6,12 +6,12 @@ const RootLayout = ({
   children: React.ReactNode;
 }>) => {
   return (
-    <div>
+    <div className="app-shell">
       <a href="#main-content" className="skip-link">
         Skip to content
       </a>
       <Navbar />
-      <div id="main-content" tabIndex={-1}>
+      <div id="main-content" tabIndex={-1} className="app-main">
         {children}
       </div>
     </div>

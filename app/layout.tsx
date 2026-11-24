@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Karla } from "next/font/google";
 import "./globals.css";
 import { satoshi } from "../fonts/font";
+import { THEME_SCRIPT } from "@/components/ThemeToggle";
 
 const geistKarla = Karla({
   variable: "--font-geist-karla",
@@ -38,7 +39,12 @@ export const metadata: Metadata = {
   },
 };
 
-export const viewport: Viewport = { themeColor: "#15112b" };
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f3f1f8" },
+    { media: "(prefers-color-scheme: dark)", color: "#0c0a17" },
+  ],
+};
 
 export default function Layout({
   children,
@@ -46,7 +52,10 @@ export default function Layout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body
         className={`${geistKarla.variable} ${satoshi.variable} font-karla antialiased`}
       >
