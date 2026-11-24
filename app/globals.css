@@ -2591,3 +2591,10 @@ input[type="range"]::-moz-range-progress { background: linear-gradient(90deg, va
 /* Cards and selections pick up the blue accent. */
 .vs-aspect.is-on, .cs-tpl.is-on, .ex-preset.is-on { box-shadow: var(--sc-e1), 0 0 0 2px var(--sc-accent), 0 8px 20px -8px var(--sc-accent); }
 .as-sec { border-radius: 20px; }
+/* Phones: the hero's two keys share the row and keep their full labels. */
+@media (max-width: 639px) {
+  .header .header-container aside { flex-wrap: wrap; width: 100%; }
+  .header .header-container aside > *, .header .header-container aside .record { flex: 1 1 140px; min-width: 0; }
+  .header .header-container aside a, .header .record .primary-btn { width: 100%; justify-content: center; padding: 11px 14px; gap: 8px; }
+  .header .header-container aside a span, .header .record .primary-btn span { overflow: visible; white-space: nowrap; text-overflow: clip; }
+}

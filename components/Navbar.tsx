@@ -7,7 +7,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
 import { recordRoute } from "@/lib/navigation";
@@ -33,7 +33,12 @@ const Navbar = () => {
   const router = useRouter();
   const pathname = usePathname();
   const { data: session } = authClient.useSession();
-  const user = session?.user;
+  // The server never has the session here, but the browser may already have
+  // it when hydrating; showing the account only after mount keeps the first
+  // client render identical to the server's (no hydration mismatch).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const user = mounted ? session?.user : undefined;
 
   // The navbar persists across (root) routes, so it is the one place that
   // sees every client-side navigation (see lib/navigation.ts).
