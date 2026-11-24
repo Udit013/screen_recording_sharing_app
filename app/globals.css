@@ -1459,24 +1459,6 @@
 .ed-help kbd { white-space: nowrap; }
 
 /* Owner nudge on the video page */
-.edit-nudge {
-  --ed-ink: var(--sc-ink); --ed-muted: var(--sc-muted); --ed-line: rgb(var(--sc-muted-rgb) / 0.18);
-  --ed-soft: rgb(var(--sc-soft-rgb) / 0.04); --ed-accent: var(--sc-accent);
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  padding: 12px 14px 12px 16px; border-radius: 16px; border: 1px solid rgba(255, 67, 147, 0.25);
-  background: linear-gradient(90deg, #fff4f9, #fff 70%);
-}
-.edit-nudge.is-edited { border-color: rgb(var(--sc-muted-rgb) / 0.2); background: var(--sc-surface); }
-.edit-nudge-icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--sc-accent-soft); color: var(--sc-accent); flex-shrink: 0; }
-.edit-nudge.is-edited .edit-nudge-icon { background: rgb(var(--sc-soft-rgb) / 0.05); color: var(--sc-ink-2); }
-.edit-nudge-text { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 1px; }
-.edit-nudge-text strong { font-size: 0.92rem; font-weight: 800; color: var(--sc-ink); }
-.edit-nudge-text span { font-size: 0.82rem; color: var(--sc-muted); }
-.edit-nudge-actions { display: flex; align-items: center; gap: 10px; }
-.edit-nudge-link { font-size: 0.85rem; font-weight: 800; color: var(--sc-accent); padding: 6px 8px; border-radius: 8px; }
-.edit-nudge-link:hover { background: var(--sc-accent-soft); }
-.edit-nudge-dismiss { font-size: 0.8rem; font-weight: 700; color: var(--sc-muted); padding: 6px 8px; border-radius: 8px; }
-.edit-nudge-dismiss:hover { color: var(--sc-ink); background: rgb(var(--sc-soft-rgb) / 0.05); }
 
 /* Timeline */
 .tl { display: flex; flex-direction: column; gap: 4px; user-select: none; }
@@ -2607,15 +2589,6 @@ input[type="range"]::-moz-range-progress { background: linear-gradient(90deg, va
 .detail-header .cta .edit-btn { background: var(--sc-primary); box-shadow: var(--sc-primary-shadow); color: #fff; }
 .detail-header .cta .edit-btn img { filter: brightness(0) invert(1); }
 .detail-header .cta .delete-btn { color: var(--sc-rec); }
-/* The edit nudge: a glass strip with a blue indicator, in both themes. */
-.edit-nudge {
-  border: 0; border-radius: 22px; padding: 12px 14px 12px 16px;
-  background: linear-gradient(90deg, var(--sc-accent-soft), transparent 70%), var(--sc-surface);
-  backdrop-filter: var(--sc-glass-blur); -webkit-backdrop-filter: var(--sc-glass-blur); box-shadow: var(--sc-e1);
-}
-.edit-nudge-icon { border-radius: 50%; background: var(--sc-primary); color: #fff; box-shadow: var(--sc-primary-shadow); }
-.edit-nudge.is-edited .edit-nudge-icon { background: var(--sc-btn); color: var(--sc-ink-2); box-shadow: var(--sc-btn-shadow); }
-.edit-nudge-link, .edit-nudge-dismiss { border-radius: 999px; }
 /* The player sits in a slate bezel, like a monitor on the deck. */
 .video-details .content .video-player {
   border-radius: 30px; padding: 0; background: #000;
@@ -2656,3 +2629,39 @@ input[type="range"]::-moz-range-progress { background: linear-gradient(90deg, va
 .video-info [role="tablist"] { scrollbar-width: none; }
 .video-info [role="tablist"]::-webkit-scrollbar { display: none; }
 .video-info [role="tablist"] button { flex: 1 1 auto; padding: 7px 8px; font-size: 0.78rem; }
+
+/* ── Editor (v4): same monitor bezel, LED readouts and glass rows ───────── */
+.ed-stage .ed-video {
+  border-radius: 24px; background: #000; margin: 6px;
+  box-shadow: 0 0 0 6px #070a11, 0 0 0 7px rgba(255, 255, 255, 0.08), 0 18px 40px -16px rgba(0, 0, 0, 0.8);
+}
+.ed-stage .ed-video-flag { border-radius: 999px; }
+/* The before/after summary reads like an LED panel on the deck. */
+.ed-stage .ed-summary { background: #05080d; box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06); border-radius: 20px; }
+.ed-stage .ed-summary strong { color: var(--sc-led); text-shadow: 0 0 10px rgba(45, 226, 230, 0.45); font-weight: 600; }
+.ed-stage .ed-summary .ed-summary-saved strong { color: #7f9bff; text-shadow: 0 0 10px rgba(76, 116, 255, 0.5); }
+.ed-stage .ed-summary-arrow { color: rgba(45, 226, 230, 0.6); }
+.ed-stage .ed-card-head h2, .ed-side h2, .ed-side h3 { font-weight: 600; letter-spacing: -0.01em; }
+.ed-chip { border-radius: 999px; }
+/* Top bar: a floating glass pill with round undo/redo/help keys. */
+.ed-top { border-radius: 26px; box-shadow: var(--sc-e2); }
+.ed-top .ed-icon-btn, .ed-top button[aria-label="Undo"], .ed-top button[aria-label="Redo"] { border-radius: 50%; }
+.ed-title h1 { font-weight: 500; letter-spacing: -0.03em; }
+/* Side panel rows: glass keys; the open one is lit. */
+.as-sec { border: 0; border-radius: 18px; background: var(--sc-btn); box-shadow: var(--sc-btn-shadow); }
+.as-sec.is-open { box-shadow: var(--sc-btn-shadow), 0 0 0 1px var(--sc-accent); }
+.as-sec-title { font-weight: 600; }
+.as-select, .ed-lang select { border-radius: 999px !important; border: 0 !important; background: var(--sc-well) !important; box-shadow: var(--sc-inset) !important; }
+.as-chip, .as-preset-actions button { border-radius: 999px; }
+.as-chip.is-on, .as-chip[aria-pressed="true"] { background: var(--sc-primary); color: #fff; box-shadow: var(--sc-primary-shadow); }
+/* Level meters: segmented LED ladders in a dark well. */
+.as-meter > span { height: 7px; background: #05080d; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.8); }
+.as-meter-out > span > span {
+  background: linear-gradient(90deg, var(--sc-led) 0 68%, #f5c542 68% 90%, var(--sc-rec) 90%);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px); mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px);
+}
+.as-meter-gr > span > span { background: var(--sc-accent); box-shadow: 0 0 6px var(--sc-accent); }
+.as-status { border-radius: 14px; }
+/* Timeline deck: the same bezel language as the monitor. */
+.ed-timeline { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), var(--sc-e3); }
+.ed-timeline kbd { border-radius: 8px; background: linear-gradient(180deg, #2a3348, #1a2233); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 2px 0 #05080d; }

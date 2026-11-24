@@ -11,7 +11,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { VideoPlayerHandle } from "@/components/VideoPlayer";
 import BackLink from "@/components/BackLink";
 import EmptyState from "@/components/EmptyState";
-import EditNudge from "@/components/EditNudge";
 
 type PageProps = {
   params: Promise<{ videoId: string }>;
@@ -115,13 +114,6 @@ const VideoDetailPage = ({ params }: PageProps) => {
         </div>
       )}
 
-      <EditNudge
-        videoId={video.videoId}
-        videoUrl={video.videoUrl}
-        ownerId={video.userId}
-        edl={video.edl}
-        duration={video.duration}
-      />
 
       <section className="video-details">
         <div className="content">

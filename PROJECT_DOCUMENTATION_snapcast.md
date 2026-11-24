@@ -2052,7 +2052,6 @@ Both the editor preview and `VideoPlayer` skip cuts on `requestAnimationFrame`. 
 - **Clip export.** **Export clip** renders `clipSegments(kept, selection)` (`edl.ts`, unit-tested): only the kept material inside the selection, so a clip of an edited video is itself edited.
 - **Autosave on in-app navigation.** `beforeunload` only covers page unloads; an in-app link unmounts the editor and would cancel the 700 ms debounce. The pending edit is held in a ref and sent on unmount. Measured: the editor unmounted 79 ms after an edit and the save left at 85 ms, once.
 - **Navigation.** The navbar records route changes (`lib/navigation.ts`) as a mirror of the history stack. Returning to the page just below the top counts as a back navigation and pops, so landing from an email, opening the editor, and pressing the browser's back leaves no in-app page behind the landing page. `BackLink` uses `router.back()` only when there is one, and otherwise links to a parent (Library, Collections); `tests/navigation.test.ts` covers these cases. It's a real `<Link>`, so it works without JavaScript and middle-clicks open the parent.
-- **Owner nudge.** `EditNudge` invites owners of unedited videos into the editor (dismissible per video, stored in `localStorage`) and summarizes the edit on edited ones. Viewers never see it.
 
 ### 29.13 Limitations, stated plainly
 
@@ -2639,5 +2638,6 @@ The current look, appended last in `globals.css` ("v4: visionOS-style spatial gl
   - Segmented controls and the pause-level keys are a button bank; the selected key's LED lights up.
   - The editor's play button is a domed metal key; the clock is a cyan LED readout; the playhead glows cyan.
   - Buttons are pills; primary actions are solid blue with a glow.
-- **Video page.** The player sits in a slate bezel with a domed metal play key, a blue→cyan scrub bar with a metal thumb and an LED-style time readout. The details panel and comments are glass panels; the details tabs are a recessed button bank with the selected tab lit blue. Header actions are pills (Edit is the blue key), and the edit nudge is a glass strip in both themes.
+- **Video page.** The player sits in a slate bezel with a domed metal play key, a blue→cyan scrub bar with a metal thumb and an LED-style time readout. The details panel and comments are glass panels; the details tabs are a recessed button bank with the selected tab lit blue. Header actions are pills (Edit is the blue key). The old "Tighten this recording" banner was removed; Edit in the header is the way in.
+- **Editor.** The preview sits in the same monitor bezel as the player; the original/edited/removed summary is an LED panel (cyan digits on a dark well); audio-effect sections are glass keys with the open one outlined in blue; selects are recessed pills; output meters are segmented LED ladders; keyboard hints are raised keycaps.
 - **Performance.** Blur is applied to a bounded set of panels, not to every element, and there is no new dependency.
