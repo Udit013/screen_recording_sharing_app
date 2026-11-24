@@ -5,12 +5,12 @@ export function BrandMark({ size }: { size: number }) {
     <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="t" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#3a2d74" />
-          <stop offset="1" stopColor="#15112b" />
+          <stop offset="0" stopColor="#2b3a5c" />
+          <stop offset="1" stopColor="#0d1320" />
         </linearGradient>
         <linearGradient id="p" x1="16" y1="18" x2="38" y2="46" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#ff5fa2" />
-          <stop offset="1" stopColor="#ff7a3d" />
+          <stop offset="0" stopColor="#4f7bff" />
+          <stop offset="1" stopColor="#22d3ee" />
         </linearGradient>
       </defs>
       <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#t)" />

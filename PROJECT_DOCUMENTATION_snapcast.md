@@ -2566,7 +2566,7 @@ The design layer restyles the existing shared classes in place, so there's no se
 
 ### 32.4 Logo, favicon and metadata
 
-- **Mark.** A rounded tile in a deep violet-to-ink gradient with a top sheen and an inner rim (the tactile part). Inside are a pink→coral play triangle (video) and three white waveform bars (audio). It stays legible at 16 px.
+- **Mark.** A rounded tile in a slate-to-ink gradient with a top sheen and an inner rim (the tactile part). Inside are a blue→cyan play triangle (video) and three white waveform bars (audio). It stays legible at 16 px.
 - **Files:**
   - `public/assets/icons/logo.svg`: the full-colour mark, used by the navbar, sign-in, the share page, error pages and not-found.
   - `public/assets/icons/logo-mono.svg`: white, for dark backgrounds.
@@ -2611,7 +2611,7 @@ The top bar was replaced by an app shell (`components/Navbar.tsx` with `app/(roo
 - **Choosing a theme.** `components/ThemeToggle.tsx` offers Light, Dark and System. The choice is saved in `localStorage` (`snapcast-theme`); System follows the OS setting live.
 - **No flash.** An inline script in `<head>` (`THEME_SCRIPT`, `app/layout.tsx`) sets `data-theme` on `<html>` before first paint, so the wrong theme never shows.
 - **The CSS.** `:root[data-theme="dark"]` redefines the `--sc-*` tokens:
-  - surfaces: canvas #0c0a17, surface #17132a, surface-2 #1e1936;
+  - surfaces: canvas #0b0f17 under a slate room gradient, translucent glass surfaces (v4, §32.7);
   - ink #f2eefc and muted #a59ec6, about 7:1 on the surface;
   - a brighter accent, #ff4f95;
   - darker elevation shadows;
@@ -2623,3 +2623,20 @@ The top bar was replaced by an app shell (`components/Navbar.tsx` with `app/(roo
   - Tailwind's `bg-white` became `bg-surface`, and the legacy theme colours map to the tokens.
 - **The studio deck** stays dark in both themes and gets darker in dark mode, so it still reads as the stage.
 - **Browser chrome.** `theme-color` follows the system setting via media-qualified viewport metadata.
+
+### 32.7 Spatial glass and hardware controls (v4)
+
+The current look, appended last in `globals.css` ("v4: visionOS-style spatial glass + hardware skeuomorphism"), so it overrides the earlier blocks through the same tokens.
+
+- **The room and the window.** The page background (`--sc-room`) is a softly lit room: cool aluminium in light mode, deep slate in dark. On screens ≥ 900 px the content sits in one floating, frosted glass window (`.app-main`: 36 px radius, inset 16 px, large soft shadow).
+- **Glass.** Panels (hero, cards, upload form, Convert panels, editor side panel, nav) are translucent (`--sc-surface`) with `backdrop-filter` blur and a lit rim (`--sc-rim`). Dialogs use the near-opaque `--sc-solid` so text stays readable.
+- **Navigation.** On desktop the sidebar becomes a floating glass rail of round glass buttons at every width ≥ 900 px; the active section is a solid blue key. Upload is the red record key. On phones, the top bar and the bottom dock float as glass.
+- **Colour.** Accent is vivid blue (`--sc-accent` #2f5bff light, #4c74ff dark), `--sc-led` #2de2e6 for indicator lights, `--sc-rec` #e5383b for recording. Pink and violet are gone.
+- **Type.** Display headings use Satoshi 500 with tight tracking (−0.045em) and large sizes, instead of Black; a small glowing dot leads the eyebrow label.
+- **Hardware controls.**
+  - Slider thumbs are machined knobs (`--sc-knob`, a conic brushed-metal gradient) on a recessed track; Firefox's filled part glows blue→cyan.
+  - Switches are physical toggles: a metal knob that shows a cyan LED when on.
+  - Segmented controls and the pause-level keys are a button bank; the selected key's LED lights up.
+  - The editor's play button is a domed metal key; the clock is a cyan LED readout; the playhead glows cyan.
+  - Buttons are pills; primary actions are solid blue with a glow.
+- **Performance.** Blur is applied to a bounded set of panels, not to every element, and there is no new dependency.

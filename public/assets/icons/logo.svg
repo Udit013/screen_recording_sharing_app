@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 64 64" fill="none">
   <defs>
     <linearGradient id="sc-tile" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3a2d74"/>
-      <stop offset="1" stop-color="#15112b"/>
+      <stop offset="0" stop-color="#2b3a5c"/>
+      <stop offset="1" stop-color="#0d1320"/>
     </linearGradient>
     <linearGradient id="sc-play" x1="16" y1="18" x2="38" y2="46" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ff5fa2"/>
-      <stop offset="1" stop-color="#ff7a3d"/>
+      <stop offset="0" stop-color="#4f7bff"/>
+      <stop offset="1" stop-color="#22d3ee"/>
     </linearGradient>
     <linearGradient id="sc-sheen" x1="0" y1="2" x2="0" y2="30" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#fff" stop-opacity=".22"/>

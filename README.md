@@ -111,7 +111,7 @@ From test recordings with known pauses, checked against ffmpeg:
 | **Channel Analytics** | Unique viewers, watch time, completion rate, top videos |
 | **Processing Status** | Live pill while AI summary & chapters are generated |
 | **Google OAuth** | One-click sign-in via better-auth |
-| **App shell & themes** | Sidebar (icon rail in the editor, bottom tab bar on phones), Light / Dark / System themes remembered per browser with no flash on load |
+| **App shell & themes** | Floating glass window with a round-button glass rail (floating dock on phones), Light / Dark / System themes remembered per browser with no flash on load |
 | **Custom Player** | Handcrafted controls: buffered seekbar, chapter ticks, speed menu, PiP, fullscreen, keyboard shortcuts, `?t=` deep links |
 | **Timestamp Comments** | Threaded discussion pinned to moments; click a timestamp to jump the player |
 | **Interactive Transcript** | Click-to-seek segments, live search with highlighting, one-click copy |
@@ -152,7 +152,7 @@ evaluated for feasibility; the decisions:
 | AI | Gemini Flash-Lite / Flash via `@google/generative-ai` (summaries only), configurable quota-aware fallback chain |
 | On-device ML | Whisper (transformers.js) for transcription; Spleeter 2-stems ONNX on onnxruntime-web for separation |
 | Media | WebCodecs + mediabunny (MP4/M4A/Ogg/WAV), `@mediabunny/mp3-encoder` (LAME/WASM), Web Audio + AudioWorklet DSP |
-| Styling | Tailwind CSS v4 + the SnapCast Studio design system (`--sc-*` tokens; spatial, tactile controls; light/dark themes) |
+| Styling | Tailwind CSS v4 + the SnapCast Studio design system (`--sc-*` tokens; visionOS-style spatial glass, hardware-style knobs, LED switches and button banks; light/dark themes) |
 | Deployment | Vercel (free hobby tier) |
 
 ---
