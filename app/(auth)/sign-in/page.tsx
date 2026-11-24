@@ -50,6 +50,7 @@ const SignIn = () => {
         <Link href="/" className="signin-brand">
           <Image src="/assets/icons/logo.svg" alt="" aria-hidden width={36} height={36} />
           <span>SnapCast</span>
+          <span className="navbar-brand-tag" aria-hidden>Studio</span>
         </Link>
 
         <div className="signin-card">

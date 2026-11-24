@@ -61,6 +61,7 @@ const Navbar = () => {
             height={32}
           />
           <span className="navbar-brand-name">SnapCast</span>
+          <span className="navbar-brand-tag" aria-hidden>Studio</span>
         </Link>
 
         {user && (

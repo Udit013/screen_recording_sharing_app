@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Karla } from "next/font/google";
 import "./globals.css";
 import { satoshi } from "../fonts/font";
@@ -13,28 +13,31 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"
   ),
   title: {
-    default: "SnapCast — Screen Recording & Video Sharing",
-    template: "%s | SnapCast",
+    default: "SnapCast Studio: record, edit and share video in your browser",
+    template: "%s | SnapCast Studio",
   },
   description:
     "Record a demo in one take, then edit it by editing its transcript: cut words, tighten pauses, export an MP4 and share with privacy controls, all in your browser.",
+  applicationName: "SnapCast Studio",
   icons: {
-    icon: "/assets/icons/logo.svg",
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
   },
   openGraph: {
     type: "website",
-    siteName: "SnapCast",
-    title: "SnapCast — Screen Recording & Video Sharing",
+    siteName: "SnapCast Studio",
+    title: "SnapCast Studio: record, edit and share video in your browser",
     description:
-      "Browser-native screen recording with transcript-based editing, pause removal, AI chapters and privacy-controlled sharing.",
+      "Screen recording with transcript editing, captions in English, Hindi and Hinglish, an audio studio, multitrack audio and media conversion, all in your browser.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "SnapCast — Screen Recording & Video Sharing",
+    title: "SnapCast Studio: record, edit and share video in your browser",
     description:
-      "Browser-native screen recording with transcript-based editing, pause removal, AI chapters and privacy-controlled sharing.",
+      "Screen recording with transcript editing, captions in English, Hindi and Hinglish, an audio studio, multitrack audio and media conversion, all in your browser.",
   },
 };
+
+export const viewport: Viewport = { themeColor: "#15112b" };
 
 export default function Layout({
   children,

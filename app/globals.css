@@ -1878,3 +1878,270 @@ body {
 @media (max-width: 760px) { .cv-db { margin-left: 0; } }
 .as-help-block { font-size: 0.75rem; color: var(--ed-muted); line-height: 1.4; margin: 0; }
 .as-pitch { font-size: 0.78rem; font-weight: 700; color: var(--ed-ink); font-variant-numeric: tabular-nums; background: var(--ed-soft); border-radius: 8px; padding: 6px 8px; margin: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SnapCast Studio design system (v2): Spatial UI + tactile (skeuomorphic)
+   controls. Tokens first; the rules below restyle the shared components in
+   place, so every page picks them up. Light theme (the app is light-only);
+   the editor's stage and timeline form a dark "studio deck".
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --sc-ink: #17132b;
+  --sc-ink-2: #2c2650;
+  --sc-muted: #67617f;
+  --sc-line: rgba(39, 30, 84, 0.12);
+  --sc-line-strong: rgba(39, 30, 84, 0.2);
+  --sc-canvas: #f3f1f8;
+  --sc-surface: #ffffff;
+  --sc-surface-2: #f8f7fb;
+  --sc-accent: #f2367f;
+  --sc-accent-hi: #ff5fa2;
+  --sc-accent-2: #ff7a3d;
+  --sc-accent-soft: #ffe9f2;
+  --sc-violet: #5b42d6;
+  --sc-danger: #d93a45;
+  --sc-success: #1f8a5b;
+  --sc-deck: #16122a;
+  --sc-deck-2: #211b3d;
+  --sc-deck-line: rgba(255, 255, 255, 0.09);
+  --sc-deck-text: #ece9f7;
+  --sc-deck-muted: #a7a0c6;
+  --sc-r-sm: 10px;
+  --sc-r: 14px;
+  --sc-r-lg: 20px;
+  /* Elevation: a lit top edge + a soft contact shadow + ambient depth. */
+  --sc-e1: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(23, 19, 43, 0.06), 0 2px 8px -2px rgba(23, 19, 43, 0.06);
+  --sc-e2: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 4px rgba(23, 19, 43, 0.05), 0 12px 28px -10px rgba(23, 19, 43, 0.18);
+  --sc-e3: 0 2px 6px rgba(23, 19, 43, 0.08), 0 30px 70px -20px rgba(23, 19, 43, 0.35);
+  --sc-inset: inset 0 1px 2px rgba(23, 19, 43, 0.08), inset 0 0 0 1px var(--sc-line);
+  --sc-btn: linear-gradient(180deg, #ffffff, #f4f2f9);
+  --sc-btn-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(39, 30, 84, 0.06), 0 1px 2px rgba(23, 19, 43, 0.1), 0 0 0 1px var(--sc-line);
+  --sc-primary: linear-gradient(180deg, var(--sc-accent-hi), var(--sc-accent));
+  --sc-primary-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -1px 0 rgba(0, 0, 0, 0.14), 0 1px 2px rgba(206, 30, 102, 0.45), 0 8px 18px -8px rgba(242, 54, 127, 0.7);
+  --sc-focus: 0 0 0 3px rgba(242, 54, 127, 0.35);
+  --sc-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --color-pink-100: var(--sc-accent);
+  --color-dark-100: var(--sc-ink);
+  --color-gray-100: var(--sc-muted);
+  --color-blue-100: var(--sc-ink-2);
+}
+
+html { background: var(--sc-canvas); }
+body {
+  color: var(--sc-ink);
+  background:
+    radial-gradient(1100px 420px at 100% -120px, rgba(91, 66, 214, 0.08), transparent 70%),
+    radial-gradient(900px 380px at -10% -160px, rgba(242, 54, 127, 0.07), transparent 70%),
+    var(--sc-canvas);
+  min-height: 100vh;
+}
+
+/* Focus: one clear, consistent ring everywhere (keyboard only). */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--sc-accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+
+/* ── Navigation ─────────────────────────────────────────────────────────── */
+.navbar {
+  position: sticky; top: 0; z-index: 40; height: 68px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--sc-line);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 8px 24px -18px rgba(23, 19, 43, 0.35);
+}
+.navbar nav a .navbar-brand-name { color: var(--sc-ink); letter-spacing: -0.4px; }
+.navbar-brand-tag {
+  margin-left: 2px; padding: 2px 7px; border-radius: 6px; font-size: 0.62rem; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase;
+  color: #fff; background: linear-gradient(180deg, #3a2d74, #1d1740); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.navbar nav a.nav-link {
+  border-radius: 10px; color: var(--sc-muted); font-weight: 700;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.navbar nav a.nav-link:hover { color: var(--sc-ink); background: rgba(39, 30, 84, 0.05); }
+.navbar nav a.nav-link.is-active { color: var(--sc-ink); background: var(--sc-surface); box-shadow: var(--sc-btn-shadow); }
+.navbar nav a.nav-link.is-active svg { color: var(--sc-accent); }
+@media (max-width: 420px) { .navbar nav a.navbar-brand .navbar-brand-tag { display: none; } }
+
+/* ── Buttons: tactile, with a pressed state ─────────────────────────────── */
+.ed-btn, .playlist-cancel-btn, .note-cancel-btn, .signin-google, .filter-trigger, .add-to-playlist-trigger, .dropdown-trigger {
+  background: var(--sc-btn); border: 0; box-shadow: var(--sc-btn-shadow); color: var(--sc-ink);
+  transition: transform 0.12s var(--sc-ease), box-shadow 0.15s, background 0.15s, opacity 0.15s;
+}
+.ed-btn:hover:not(:disabled), .filter-trigger:hover, .add-to-playlist-trigger:hover, .dropdown-trigger:hover {
+  background: linear-gradient(180deg, #fff, #efecf6); border-color: transparent;
+}
+.ed-btn:active:not(:disabled), .signin-google:active:not(:disabled), .filter-trigger:active {
+  transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(23, 19, 43, 0.14), 0 0 0 1px var(--sc-line);
+}
+.ed-btn.is-primary, .record .primary-btn, .playlist-create-btn, .note-save-btn, .note-add-btn, .header .primary-btn, .upload-page button[type="submit"] {
+  background: var(--sc-primary); color: #fff; border: 0; box-shadow: var(--sc-primary-shadow);
+  transition: transform 0.12s var(--sc-ease), box-shadow 0.15s, filter 0.15s;
+}
+.ed-btn.is-primary:hover:not(:disabled), .record .primary-btn:hover, .playlist-create-btn:hover, .header .primary-btn:hover, .upload-page button[type="submit"]:hover:not(:disabled) {
+  background: var(--sc-primary); filter: brightness(1.05) saturate(1.05);
+}
+.ed-btn.is-primary:active:not(:disabled), .record .primary-btn:active, .playlist-create-btn:active, .upload-page button[type="submit"]:active {
+  transform: translateY(1px); box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2), 0 1px 1px rgba(206, 30, 102, 0.3);
+}
+.ed-btn.is-danger { color: var(--sc-danger); }
+.ed-btn:disabled { opacity: 0.45; box-shadow: 0 0 0 1px var(--sc-line); }
+.ed-icon {
+  background: var(--sc-btn); border: 0; box-shadow: var(--sc-btn-shadow); transition: transform 0.12s var(--sc-ease);
+}
+.ed-icon:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(23, 19, 43, 0.14), 0 0 0 1px var(--sc-line); }
+
+/* ── Surfaces: cards lift on hover, panels sit on the canvas ────────────── */
+.video-card, .playlist-card, .analytics-panel, .cv-panel, .cv-result, .ts-track, .as-sec, .cs-list li, .playlist-create-card, .playlist-video-item, .vs-aspect, .cs-tpl, .ex-preset {
+  border: 0; box-shadow: var(--sc-e1), 0 0 0 1px var(--sc-line); background: var(--sc-surface);
+}
+.video-card, .playlist-card { border-radius: var(--sc-r-lg); transition: transform 0.2s var(--sc-ease), box-shadow 0.2s var(--sc-ease); }
+.video-card:hover, .playlist-card:hover { transform: translateY(-3px); box-shadow: var(--sc-e2), 0 0 0 1px var(--sc-line); }
+.video-card .duration { background: rgba(16, 13, 32, 0.78); backdrop-filter: blur(6px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12); }
+.analytics-card { background: var(--sc-surface-2); border: 0; box-shadow: var(--sc-inset); }
+.analytics-card-value { color: var(--sc-ink); }
+.vs-aspect.is-on, .cs-tpl.is-on, .ex-preset.is-on {
+  box-shadow: var(--sc-e1), 0 0 0 2px var(--sc-accent), 0 6px 16px -8px rgba(242, 54, 127, 0.5);
+}
+.ex-dialog, .share-modal, .record .dialog .dialog-content, .ed-help {
+  border-radius: 22px; box-shadow: var(--sc-e3), 0 0 0 1px var(--sc-line);
+}
+.ex-overlay { background: rgba(16, 13, 32, 0.5); }
+
+/* ── Fields: recessed, tactile wells ────────────────────────────────────── */
+.form-field input, .form-field textarea, .form-field select, .playlist-input, .note-input, .header .search input,
+.as-select, .ed-lang select, .cv-row select, .cv-row input[type="text"], .ex-audio-opts select, .ts-name:focus, .cs-text {
+  background: var(--sc-surface-2); border: 0; box-shadow: var(--sc-inset); border-radius: var(--sc-r-sm);
+  transition: box-shadow 0.15s, background 0.15s;
+}
+.form-field input:focus, .form-field textarea:focus, .playlist-input:focus, .note-input:focus, .header .search input:focus,
+.as-select:focus, .cs-text:focus, .cv-row input[type="text"]:focus {
+  outline: none; background: #fff; box-shadow: inset 0 1px 2px rgba(23, 19, 43, 0.06), 0 0 0 1px var(--sc-accent), var(--sc-focus);
+}
+
+/* ── Range sliders: inset track, machined knob ──────────────────────────── */
+input[type="range"] { -webkit-appearance: none; appearance: none; background: transparent; height: 22px; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(180deg, #dcd8e8, #ebe8f3); box-shadow: inset 0 1px 2px rgba(23, 19, 43, 0.25);
+}
+input[type="range"]::-moz-range-track {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(180deg, #dcd8e8, #ebe8f3); box-shadow: inset 0 1px 2px rgba(23, 19, 43, 0.25);
+}
+input[type="range"]::-moz-range-progress { height: 6px; border-radius: 999px; background: var(--sc-primary); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 18px; height: 18px; margin-top: -6px; border-radius: 50%; border: 0;
+  background: radial-gradient(circle at 50% 35%, #fff 0 35%, #e9e6f1 70%, #d6d1e3 100%);
+  box-shadow: 0 0 0 1px rgba(39, 30, 84, 0.22), 0 2px 4px rgba(23, 19, 43, 0.25), inset 0 -2px 0 rgba(39, 30, 84, 0.08);
+  transition: transform 0.12s var(--sc-ease);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; border: 0;
+  background: radial-gradient(circle at 50% 35%, #fff 0 35%, #e9e6f1 70%, #d6d1e3 100%);
+  box-shadow: 0 0 0 1px rgba(39, 30, 84, 0.22), 0 2px 4px rgba(23, 19, 43, 0.25);
+}
+input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.12); }
+input[type="range"]:focus-visible { outline: none; }
+input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 1px var(--sc-accent), var(--sc-focus); }
+input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 1px var(--sc-accent), var(--sc-focus); }
+
+/* ── Switches: recessed track, raised knob, lit when on ─────────────────── */
+.as-switch { background: linear-gradient(180deg, #d7d3e3, #e6e3ef); box-shadow: inset 0 1px 3px rgba(23, 19, 43, 0.28); }
+.as-switch[aria-checked="true"] { background: var(--sc-primary); box-shadow: inset 0 1px 3px rgba(120, 10, 60, 0.45), 0 0 10px -2px rgba(242, 54, 127, 0.5); }
+.as-switch span { background: linear-gradient(180deg, #fff, #ecebf2); box-shadow: 0 1px 3px rgba(23, 19, 43, 0.35), inset 0 -1px 0 rgba(39, 30, 84, 0.08); }
+
+/* ── Segmented controls: a well with a raised selection ─────────────────── */
+.ed-seg, .ex-seg, .cv-modes {
+  background: linear-gradient(180deg, #e9e6f2, #f1eff7); border: 0; box-shadow: inset 0 1px 3px rgba(23, 19, 43, 0.14); padding: 3px; border-radius: 12px;
+}
+.ed-seg button, .ex-seg button { border-radius: 9px; font-weight: 700; color: var(--sc-muted); transition: background 0.15s, box-shadow 0.15s, color 0.15s; }
+.ed-seg button.is-on, .ex-seg button.is-on { background: var(--sc-surface); color: var(--sc-ink); box-shadow: var(--sc-btn-shadow); }
+
+/* ── Studio editor ──────────────────────────────────────────────────────── */
+.ed { --ed-ink: var(--sc-ink); --ed-muted: var(--sc-muted); --ed-line: var(--sc-line); --ed-accent: var(--sc-accent); --ed-danger: var(--sc-danger); }
+.ed-title h1, .ed-title > * { letter-spacing: -0.4px; }
+/* The stage is the studio deck: dark, lit from above, so the picture pops. */
+.ed-stage {
+  --ed-ink: var(--sc-deck-text); --ed-muted: var(--sc-deck-muted); --ed-line: var(--sc-deck-line); --ed-soft: rgba(255, 255, 255, 0.05);
+  padding: 14px; border-radius: 24px; color: var(--sc-deck-text);
+  background: radial-gradient(120% 60% at 50% 0%, #2a2250 0%, transparent 60%), linear-gradient(180deg, var(--sc-deck-2), var(--sc-deck));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(16, 12, 36, 0.9), 0 24px 50px -24px rgba(16, 12, 36, 0.75);
+}
+.ed-video { border-radius: 14px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 16px 32px -16px rgba(0, 0, 0, 0.8); }
+.ed-stage .ed-card { background: rgba(255, 255, 255, 0.04); border: 0; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px var(--sc-deck-line); }
+.ed-stage .ed-btn, .ed-stage .ed-levels button, .ed-stage .ed-seg button.is-on {
+  background: linear-gradient(180deg, #2f2857, #241e45); color: var(--sc-deck-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.ed-stage .ed-seg { background: rgba(0, 0, 0, 0.3); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5); }
+.ed-stage .ed-levels button.is-on, .ed-stage .ed-levels button[aria-checked="true"] {
+  background: linear-gradient(180deg, #4a2552, #351b44); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 0 0 1px var(--sc-accent), 0 0 14px -4px rgba(242, 54, 127, 0.7);
+}
+.ed-stage .ed-levels button span, .ed-stage .ed-levels button small { color: var(--sc-deck-muted); }
+.ed-play {
+  width: 46px; height: 46px; color: #fff;
+  background: var(--sc-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.3), 0 8px 18px -6px rgba(242, 54, 127, 0.7);
+  transition: transform 0.12s var(--sc-ease), filter 0.15s;
+}
+.ed-play:hover { background: var(--sc-primary); filter: brightness(1.06); }
+.ed-play:active { transform: scale(0.96); }
+.ed-clock { color: #fff; padding: 6px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5); }
+.ed-clock span { color: var(--sc-deck-muted); }
+.ed-stage .ed-fine, .ed-stage .ed-chip { color: var(--sc-deck-muted); }
+/* Side panel: a raised tool surface with a segmented tab strip. */
+.ed-side { background: var(--sc-surface); border: 0; border-radius: 22px; box-shadow: var(--sc-e2), 0 0 0 1px var(--sc-line); overflow: hidden; }
+.ed-tabs { gap: 2px; padding: 8px; background: linear-gradient(180deg, #f6f4fa, #f0edf6); border-bottom: 1px solid var(--sc-line); overflow-x: auto; }
+.ed-tabs button { border: 0; border-radius: 10px; padding: 7px 12px; color: var(--sc-muted); font-weight: 700; }
+.ed-tabs button.is-on { color: var(--sc-ink); background: var(--sc-surface); box-shadow: var(--sc-btn-shadow); border-bottom-color: transparent; }
+/* Timeline: the deck continues below the editor. */
+.ed-timeline {
+  --tl-wave: #b9adff; --tl-wave-cut: #4a4370; --tl-pause: rgba(255, 255, 255, 0.05); --tl-cut: rgba(242, 54, 127, 0.22);
+  --ed-muted: var(--sc-deck-muted);
+  padding: 14px 16px 12px; border-radius: 20px; color: var(--sc-deck-text);
+  background: linear-gradient(180deg, var(--sc-deck-2), var(--sc-deck));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 0 0 1px rgba(16, 12, 36, 0.9), 0 18px 40px -24px rgba(16, 12, 36, 0.7);
+}
+.ed-timeline .tl-track { border-radius: 10px; background: rgba(0, 0, 0, 0.28); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55); }
+.ed-timeline .tl-selection { background: rgba(185, 173, 255, 0.14); border-color: #b9adff; }
+.ed-timeline kbd { background: rgba(255, 255, 255, 0.08); color: var(--sc-deck-text); border-color: rgba(255, 255, 255, 0.16); }
+.ed-timeline .ed-legend i.is-wave { background: #b9adff; }
+/* Studio panels */
+.as-sec { border-radius: var(--sc-r); }
+.as-sec.is-open { box-shadow: var(--sc-e2), 0 0 0 1px var(--sc-line-strong); }
+.as-chip { box-shadow: var(--sc-btn-shadow); border: 0; background: var(--sc-btn); }
+.ts-lane { background: linear-gradient(180deg, #ebe8f3, #f3f1f8); box-shadow: inset 0 1px 3px rgba(23, 19, 43, 0.15); }
+.ts-clip { background: linear-gradient(180deg, rgba(255, 95, 162, 0.28), rgba(242, 54, 127, 0.16)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 1px 3px rgba(23, 19, 43, 0.2); }
+.cs-list li.is-active { box-shadow: var(--sc-e1), 0 0 0 2px var(--sc-accent); }
+
+/* ── Sign-in: branded spatial panel (a card when stacked, half the page from 1024px) ── */
+.signin-pitch { border-radius: 24px; margin: 0 16px 24px; padding: 28px 22px; }
+@media (min-width: 1024px) { .signin-pitch { border-radius: 0; margin: 0; padding: 96px 40px 40px 72px; } }
+@media all {
+  .signin-pitch {
+    background:
+      radial-gradient(700px 380px at 110% -10%, rgba(91, 66, 214, 0.45), transparent 60%),
+      radial-gradient(600px 360px at -10% 110%, rgba(242, 54, 127, 0.35), transparent 60%),
+      var(--sc-deck);
+    color: var(--sc-deck-text);
+  }
+  .signin-pitch h1, .signin-pitch h3 { color: #fff; }
+  .signin-pitch h1 span { background: linear-gradient(90deg, var(--sc-accent-hi), var(--sc-accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .signin-lede, .signin-pitch li p { color: var(--sc-deck-muted); }
+  .signin-icon { background: rgba(255, 255, 255, 0.08); color: #ff8fbf; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.08); }
+}
+.signin-card { background: var(--sc-surface); border-radius: 24px; box-shadow: var(--sc-e3), 0 0 0 1px var(--sc-line); }
+.signin-google { border-radius: 14px; font-weight: 700; }
+.signin-google:hover:not(:disabled) { background: linear-gradient(180deg, #fff, #f6f4fa); border-color: transparent; box-shadow: var(--sc-btn-shadow), 0 6px 16px -8px rgba(23, 19, 43, 0.35); }
+
+/* ── Feedback states ────────────────────────────────────────────────────── */
+.empty-state { border-radius: var(--sc-r-lg); background: var(--sc-surface); box-shadow: var(--sc-e1), 0 0 0 1px var(--sc-line); }
+.ex-error, .signin-error { color: var(--sc-danger); }
+.processing-pill { box-shadow: var(--sc-btn-shadow); }
