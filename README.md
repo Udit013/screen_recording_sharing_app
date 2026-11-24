@@ -1,6 +1,8 @@
-# SnapCast — Record messy, ship clean
+<p><img src="public/assets/icons/logo.svg" width="56" height="56" alt="SnapCast Studio logo"></p>
 
-> A screen recorder with a one-take editor for developer demos, PR walkthroughs and bug repros. Record without rehearsing, then fix the take like a doc: delete words from the transcript, tighten every pause, export an MP4 or share the edit as a link. Speech recognition, audio analysis and video encoding all run in the browser, so editing costs nothing to operate. Built with Next.js 15, Neon PostgreSQL, Cloudinary, Whisper (transformers.js), WebCodecs and Gemini 2.0 Flash.
+# SnapCast Studio: record messy, ship clean
+
+> A screen recorder with a creative studio built in. Record a demo in one take, then fix it like a doc: delete words from the transcript, tighten every pause, add captions in English, Hindi, Sanskrit or Hinglish, shape the sound with a real audio studio, mix in music and voiceover, reframe for Reels or YouTube, and export. Speech recognition, audio processing, AI vocal separation and video encoding all run in the browser, so editing costs nothing to operate. Built with Next.js 15, Neon PostgreSQL, Cloudinary, Whisper and Spleeter (transformers.js / onnxruntime-web), WebCodecs and Gemini.
 
 [![CI](https://github.com/Udit013/screen_recording_sharing_app/actions/workflows/ci.yml/badge.svg)](https://github.com/Udit013/screen_recording_sharing_app/actions/workflows/ci.yml)
 [![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?logo=vercel)](https://snapcast-studio.vercel.app)
@@ -29,7 +31,25 @@ Every edit is non-destructive and undoable (⌘Z / ⇧⌘Z). The upload is never
 
 ### Studio: captions, framing and audio
 
-The editor also has **Captions**, **Video** and **Audio** tabs, which work like a small free studio. Captions are generated from the transcript, styled with six templates (karaoke, word-pop and other animations), burned into exports or downloaded as SRT/VTT, and they follow every cut. Video adds 9:16, 1:1, 4:5 and 16:9 reframing (fill, fit or blurred background), crop and colour. Audio adds EQ, compression, gate, echo, reverb, limiter, fades, normalisation and manual pitch shift, with live Before/After. The preview and the export run the same code, so what you hear and see is what you get. Architecture, measurements, licences, what isn't built yet and a self-hosting plan: [docs/STUDIO.md](docs/STUDIO.md).
+Beyond the transcript, the editor has five more tabs and a separate Convert page. Everything below is previewed live, and the preview and the export run the same code, so what you hear and see is what you get:
+
+- **Captions.**
+  - Generated from the transcript and editable.
+  - Six templates, including karaoke and word-pop animations.
+  - Burned into exports or downloaded as SRT/VTT; they follow every cut.
+- **Video.** 9:16, 1:1, 4:5 and 16:9 reframing (fill, fit or blurred background), crop and colour.
+- **Audio.**
+  - EQ, compressor, gate, echo, reverb, limiter, fades and normalisation, with a Before/After toggle.
+  - Manual pitch shift.
+  - **Automatic pitch correction** to a key and scale.
+- **Tracks.** Music, voiceover and sound-effect tracks, with per-clip trim, fades and levels. You can mute, replace or extract the original audio.
+- **Languages.** Transcription and captions in English, Hindi, Sanskrit and code-mixed Hinglish, in the right script.
+- **Convert page.**
+  - Video → MP3/M4A/Opus/WAV.
+  - Audio → MP4 with an animated visualizer.
+  - **On-device vocal/instrumental separation.**
+
+Architecture, measurements, licences, the design system, limitations and a self-hosting plan are in [PROJECT_DOCUMENTATION_snapcast.md](PROJECT_DOCUMENTATION_snapcast.md).
 
 ### How it works
 
@@ -78,11 +98,13 @@ From test recordings with known pauses, checked against ffmpeg:
 | **Screen Recording** | Browser-native MediaRecorder API — no plugins, no extensions |
 | **Webcam PiP Overlay** | Canvas API composites circular webcam over screen in real-time |
 | **Video Upload** | Direct signed upload to Cloudinary CDN |
-| **AI Summary & Tags** | Gemini Flash (`gemini-3.5-flash`, falling back to `gemini-2.5-flash`) generates summaries and tags from video context |
+| **Studio editor** | Captions (6 animated templates, SRT/VTT), reframing and colour, a full audio studio with pitch correction, multitrack music/voiceover/effects, MP4/MP3/M4A/Opus/WAV export |
+| **Multilingual transcription** | English, Hindi, Sanskrit and Hinglish (per-phrase language detection), Devanagari and Latin scripts, word timestamps |
+| **Convert** | Video → audio, audio → video with visualizer (Reels/Shorts/YouTube shapes), on-device vocal/instrumental separation (Spleeter) |
+| **AI Summary, Tags & Chapters** | One Gemini request per video (Flash-Lite first, quota-aware fallback); never used for editing |
 | **Smart Search** | Full-text search across titles, transcripts, and AI summaries |
 | **Privacy Controls** | Public / Private / Link-only visibility per video |
 | **Shareable Links** | Time-limited share tokens (7-day expiry) with revocation |
-| **AI Chapters** | Gemini auto-generates chapters from the transcript; owner can edit/delete |
 | **Auto Transcript** | Web Speech API captures timestamped narration during recording |
 | **Timestamped Notes** | Private, per-user notes pinned to moments; click to jump the player |
 | **Collections / Playlists** | Group videos into named collections (many-to-many) |
@@ -126,8 +148,10 @@ evaluated for feasibility; the decisions:
 | ORM | Drizzle ORM |
 | Auth | better-auth + Google OAuth |
 | Video Storage | Cloudinary (free tier — 25 GB) |
-| AI | Gemini Flash via `@google/generative-ai`, with a configurable model fallback chain |
-| Styling | Tailwind CSS v4 |
+| AI | Gemini Flash-Lite / Flash via `@google/generative-ai` (summaries only), configurable quota-aware fallback chain |
+| On-device ML | Whisper (transformers.js) for transcription; Spleeter 2-stems ONNX on onnxruntime-web for separation |
+| Media | WebCodecs + mediabunny (MP4/M4A/Ogg/WAV), `@mediabunny/mp3-encoder` (LAME/WASM), Web Audio + AudioWorklet DSP |
+| Styling | Tailwind CSS v4 + the SnapCast Studio design system (`--sc-*` tokens; spatial, tactile controls) |
 | Deployment | Vercel (free hobby tier) |
 
 ---
@@ -250,6 +274,13 @@ See [`.env.example`](.env.example) for the full list. The editor needs **no** ex
 If your database predates the editor, `npx drizzle-kit push` adds the two nullable `jsonb` columns (`words`, `edl`). The change is additive and existing rows are untouched.
 
 ---
+
+## Deployment
+
+- **Production:** [snapcast-studio.vercel.app](https://snapcast-studio.vercel.app). Vercel builds and deploys every push to `main`; GitHub Actions CI runs typecheck, lint, tests and a production build.
+- **Environment variables:** set the variables above in Vercel (Production). `NEXT_PUBLIC_BASE_URL` must be the production URL; Google sign-in redirects to `{NEXT_PUBLIC_BASE_URL}/api/auth/callback/google`, which must be an authorised redirect URI in Google Cloud.
+- **Database migrations:** none are needed for the Studio features. They store settings in the existing `videos.edl` JSON column.
+- **First run of on-device features:** the Whisper (41/240 MB) and Spleeter (52 MB) models download from Hugging Face on first use and are cached by the browser.
 
 ## Free Tier Summary
 

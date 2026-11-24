@@ -1,4 +1,4 @@
-# SnapCast — Complete Technical Documentation
+# SnapCast Studio — Complete Technical Documentation
 
 *A screen recorder with a one-take editor (transcript-based cutting, pause tightening, on-device MP4 export), AI transcription, and video sharing, built with Next.js 15.*
 
@@ -36,9 +36,12 @@ Every claim in this document is grounded in the actual code in this repository a
 24. [Concept Deep Dives (Beginner → Advanced)](#24-concept-deep-dives-beginner--advanced)
 25. [Complete User-Action Traces](#25-complete-user-action-traces)
 26. [Interview Question Bank](#26-interview-question-bank)
-27. [Full Walkthrough: A Day in the Life of a Video](#27-full-walkthrough-a-day-in-the-life-of-a-video)
-28. [The One-Take Editor](#28-the-one-take-editor)
-29. [Accessibility and responsive baseline](#29-accessibility-and-responsive-baseline)
+27. [Common Follow-Up Questions](#27-common-follow-up-questions)
+28. [Full Walkthrough: A Day in the Life of a Video](#28-full-walkthrough-a-day-in-the-life-of-a-video)
+29. [The One-Take Editor](#29-the-one-take-editor)
+30. [Accessibility and responsive baseline](#30-accessibility-and-responsive-baseline)
+31. [SnapCast Studio: audio, captions, video, conversion](#31-snapcast-studio-audio-captions-video-conversion)
+32. [Design system and branding](#32-design-system-and-branding)
 
 ---
 
@@ -701,118 +704,39 @@ router.push(`/video/${videoId}`)
 
 ### 8.1 What Gemini is asked to do, and when
 
-There are exactly two AI calls in this entire app, both defined in `lib/gemini.ts`, and both are called from exactly one place: `processVideoAI` in `lib/actions/video.ts`.
+Gemini does one job: a video's **summary, tags and chapters**, in a **single request** (`analyzeVideo` in `lib/gemini.ts`), called from one place, `processVideoAI` in `lib/actions/video.ts`. It is never used for editing, transcription, separation or pitch correction. Without `GEMINI_API_KEY` the feature is simply off: videos get no summary, and the UI shows an honest empty state.
 
-1. **`analyzeVideoContent(context)`** — produces a summary + tags.
-2. **`generateChapters(timedTranscript, maxSeconds)`** — produces chapter markers.
+### 8.2 `processVideoAI`: claiming, calling, recording the outcome
 
-Both are guarded by the same pattern: if `process.env.GEMINI_API_KEY` is unset, `getClient()` returns `null` and the function short-circuits to `null` immediately. **This means the entire AI feature is optional** — the app works correctly with zero AI configured; videos simply never get a summary/tags/chapters, and the UI shows an honest "No AI summary yet" empty state instead of erroring.
+1. **Access.** The caller must be signed in and able to see the video (the action spends quota).
+2. **Atomic claim.** A conditional `UPDATE … RETURNING` claims the run for exactly one caller. It matches a video that is `idle`; one that is `failed` and failed more than 10 minutes ago (`FAILED_RETRY_MS`); or one whose `processing` run is older than 2 minutes, treated as dead.
+3. **One request.** The context is the transcript, or title/description/tags when there's none. The timed transcript segments go along for chapters, which are only requested when the owner hasn't written chapters by hand.
+4. **Outcome.**
+   - Success stores the summary, tags and chapters, and marks the video `ready`.
+   - A real failure (quota, outage, retired model) stores `failed` with the time in `processingStartedAt`, so a later view retries after the back-off instead of on every page view.
+   - Content too short to summarise (under 12 words), or no key, is `ready` with nothing to add.
 
-### 8.2 `processVideoAI` — orchestrating the AI step
+### 8.3 Making the free tier go further
 
-```ts
-export const processVideoAI = withError(async (videoId: string) => {
-  const userId = await getSessionUserId();   // signed in — this spends API quota
-  await assertVideoReadable(videoId, userId); // ...and only on videos you can see
+Gemini writes a video's summary, tags and chapters, and nothing else. Editing, transcription, separation and pitch correction never call it. The goal is to make the free tier go as far as possible (`lib/gemini.ts`):
 
-  // Atomic claim: exactly one concurrent caller gets a row back.
-  const [existing] = await db.update(videos)
-    .set({ processingStatus: "processing", processingStartedAt: now })
-    .where(and(eq(videos.videoId, videoId), or(
-      inArray(videos.processingStatus, ["idle", "failed"]),
-      and(eq(videos.processingStatus, "processing"),          // reclaim a dead run
-          or(isNull(videos.processingStartedAt), lt(videos.processingStartedAt, staleBefore))),
-    )))
-    .returning();
-  if (!existing) return { alreadyProcessed: true };  // ready, or another run in flight
+| Change | Effect |
+|---|---|
+| Summary + tags + chapters in **one** request | Half the requests per video (was 2) |
+| Flash-Lite first: 3.5-flash-lite → 3.5-flash → 2.5-flash → 3.1-flash-lite | Lite models have higher free-tier limits; checked live: 1.2–1.7 s, valid JSON |
+| JSON mode, temperature 0.2, capped output (400/900 tokens), minimal thinking | Replies parse first time (a parse failure used to cost a retry); short, cheap responses |
+| Quota-aware fallback | A 429 rests that model until its `retryDelay` (else 60 s); 500/503 rests it 30 s; 404 (retired) for a day. While every model rests, no request is sent |
+| Failed videos retry after 10 minutes, not on every view | No request burned on each page view while the quota is out |
+| Compact input: transcript merged into ≥15 s blocks within 12 000 characters, covering the whole video | Fewer input tokens; long videos keep their late chapters (the old 9 000-character cut lost them) |
+| Videos with too little text (< 12 words) are skipped | No request for nothing |
 
-  try {
-    const context = existing.transcript?.trim()
-      ? existing.transcript
-      : `Title: ${existing.title}\nDescription: ${existing.description}\nTags: ${(existing.tags ?? []).join(", ")}`;
+The model list stays configurable with `GEMINI_MODEL` (comma-separated). When this was checked live, `gemini-2.5-flash-lite` was listed by the API but retired (404), which is why defaults are verified rather than assumed.
 
-    const hasManualChapters = (existing.chapters?.length ?? 0) > 0;
-    const wantsChapters = !hasManualChapters && (existing.transcriptSegments ?? []).length > 0;
+### 8.4 Validation of what comes back
 
-    // Independent calls — run concurrently, not back to back.
-    const [aiResult, aiChapters] = await Promise.all([
-      analyzeVideoContent(context),
-      wantsChapters ? generateChapters(timedTranscript, existing.duration ?? 0) : Promise.resolve(null),
-    ]);
-
-    await db.update(videos).set({
-      aiSummary: aiResult?.summary ?? existing.aiSummary ?? null,
-      tags: aiResult?.tags?.length ? aiResult.tags : (existing.tags ?? []),
-      chapters: aiChapters ?? existing.chapters ?? [],
-      processingStatus: "ready",
-    }).where(...);
-    return { processed: true };
-  } catch {
-    await db.update(videos).set({ processingStatus: "failed" }).where(...);
-    return { processed: false };
-  }
-});
-```
-
-Three important design decisions live in this one function:
-
-1. **Summary/tags have a fallback context.** If a video has a transcript (i.e., it was recorded with narration), the AI reads *that*. If not (i.e., it was uploaded, or recorded silently), the AI instead reads a constructed string of `Title / Description / Tags`. **This means every video gets a summary, whether recorded or uploaded** — only the *source material* differs.
-2. **Chapters have no such fallback — they require a real transcript.** There's no meaningful way to generate topic-boundary chapters from a title and description alone; chapters need actual spoken content with timestamps to segment. So `aiChapters` stays `null` unless `transcriptSegments.length > 0`.
-3. **Manual chapters always win.** If the video owner already added even one chapter by hand (via `VideoChapters.tsx`), `hasManualChapters` is true and the AI chapter step is skipped entirely — the app never silently overwrites a human's work.
-
-### 8.3 `analyzeVideoContent` — the summary/tags prompt, and the model chain
-
-```ts
-const DEFAULT_MODELS = ["gemini-3.5-flash", "gemini-2.5-flash"];       // GEMINI_MODEL overrides
-
-async function generateText(prompt: string): Promise<string | null> {
-  for (const name of geminiModels()) {
-    try {
-      return (await genAI.getGenerativeModel({ model: name }).generateContent(prompt)).response.text().trim();
-    } catch (err) {
-      console.error(`[gemini] ${name} failed (HTTP ${status}): ...`);     // never the prompt or reply
-      if (![404, 429, 500, 503].includes(status)) return null;           // not a model problem: stop
-    }
-  }
-  return null;
-}
-
-export async function analyzeVideoContent(context: string): Promise<AiVideoAnalysis | null> {
-  if (!isGeminiConfigured() || !context.trim()) return null;
-  const text = await generateText(`Analyze this video content and respond with ONLY valid JSON...`);
-  ...JSON.parse(stripFences(text)) → { summary, tags }
-}
-```
-
-**Why a chain, and why these two models.** Google retires Gemini models on a schedule, and `gemini-2.0-flash` was shut down while this app still called it. Every `generateContent` returned 404, both helpers swallowed the error and returned `null`, and `processVideoAI` stored each video as `ready` with no summary and no chapters, which is permanent because ready videos are never reprocessed. Nothing was logged, so it went unnoticed. The fix has four parts:
-
-1. **A chain with fallback.** A retired model (404), exhausted quota (429) or outage (503) falls through to the next model; anything else (a bad key, a blocked prompt) stops at once so a failing request doesn't spend more quota. `GEMINI_MODEL` overrides the list without a deploy of code.
-2. **Defaults chosen by measurement, not by name.** With this app's real prompt, `gemini-3.5-flash` took 3.8 s, `gemini-2.5-flash` 2.8 s and `gemini-3.5-flash-lite` 3.6 s, all returning valid JSON. `gemini-flash-latest` (an alias for the newest model) took **34 s** and `gemini-3.8-flash` **121 s**, which no serverless request can wait for, so the alias is deliberately not in the defaults. Checking that a model *exists* is not enough: `GET /v1beta/models/gemini-2.0-flash` kept answering 200 after the model stopped serving generation.
-3. **Failures are visible.** Each failed attempt logs `[gemini] <model> failed (HTTP <status>)`.
-4. **A failed run is `failed`, not `ready`.** When a key is configured, there is content to summarize, and the AI returned nothing, `processVideoAI` records `failed`, which the claim query already treats as reprocessable, so the next open of the video retries. (This is the state §4.2 always documented as "the Gemini call threw"; it was unreachable because errors were swallowed.)
-
-`tests/gemini.test.ts` pins this down (retirement falls through and is logged, a 400 doesn't burn the next model, every-model failure returns null, non-JSON replies are rejected).
-
-### 8.4 `generateChapters` — the more carefully-validated one
-
-This function is more defensive because chapter *timestamps* directly control UI behavior (seeking) — a malformed timestamp could break the player, whereas a malformed summary just displays oddly. The validation pipeline after parsing the AI's JSON array:
-
-```ts
-const chapters: Chapter[] = parsed
-  .filter(c => c && typeof c === "object")
-  .map(c => ({
-    title: String(c.title ?? "").trim(),
-    timestamp: Math.max(0, Math.min(cap, Math.floor(Number(c.timestamp)))),
-  }))
-  .filter(c => c.title.length > 0 && Number.isFinite(c.timestamp))
-  .sort((a, b) => a.timestamp - b.timestamp)
-  .filter((c, i, arr) => i === 0 || c.timestamp > arr[i - 1].timestamp);   // strictly increasing
-
-if (chapters[0].timestamp !== 0) chapters[0].timestamp = 0;   // force a chapter at the start
-return chapters.slice(0, 8);   // cap at 8 chapters
-```
-
-Every one of these steps guards against a specific way the AI could misbehave: non-object entries are dropped; timestamps are clamped into `[0, videoDuration]` (an AI hallucinating a timestamp past the end of the video would otherwise silently break seeking); empty titles are dropped; chapters are sorted and de-duplicated by timestamp (an AI could return them out of order, or with two chapters at the same second); and the very first chapter is forced to start at `0` regardless of what the AI said, so the player always has a chapter covering the video's opening seconds.
+- Replies are parsed as JSON. Summaries are capped at 1,200 characters, and tags are lower-cased and capped at 7.
+- `cleanChapters` keeps titled entries with integer seconds inside the video, sorted and strictly increasing, with the first chapter forced to 0 and at most 8.
+- Prompts and responses are never logged, because they contain users' transcripts. Failures log only the model name and HTTP status.
 
 ---
 
@@ -1564,7 +1488,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-        env: { NEXT_PUBLIC_BASE_URL: https://snapcast-video-sharing.vercel.app }
+        env: { NEXT_PUBLIC_BASE_URL: https://snapcast-studio.vercel.app }
 ```
 Runs on every push and pull request against `main`: install → typecheck → unit tests → production build, in that order, each step gating the next (a typecheck failure means tests never even run, saving CI minutes). The build step needs no real secrets because every external service client in this app initializes **lazily** (see [§22.4](#224-lazy-initialization-as-a-security--reliability-pattern)) — only the public base URL is read at build time, for `metadataBase`.
 
@@ -1646,7 +1570,7 @@ Before relying on the auth upgrade, the fields better-auth 1.7 requires (`getAut
 | **Error messages in production** | Next.js documents that it replaces Server Action error messages with a generic message in production builds, so validation errors like "Title must be at most 200 characters" likely surface on the upload form as a generic error. Not reproduced here. The fix is returning `{ error }` results instead of throwing — the `withError` seam exists for exactly that. |
 | **`timestamp without time zone` columns** | Drizzle writes and reads these as UTC, so the app is consistent. But the raw `neon()` driver serializes JS `Date`s in the host's local timezone with an offset, which Postgres silently drops for this column type — any future raw-SQL code comparing timestamps would be off by the host's UTC offset. Migrating to `timestamptz` removes the trap. |
 | **Edited-out material is still in the source file** | Edits are non-destructive: SnapCast skips cuts, but the original Cloudinary URL still holds the full recording ([§28.11](#2811-security-and-validation)). Exporting and re-uploading produces a file without it. |
-| **Gemini model retirement** | Mitigated, not eliminated. Models are retired on Google's schedule (`gemini-2.0-flash` already was; `gemini-2.5-flash-lite` is closed to new users). The chain, logging and `failed` status make a retirement visible and self-healing while a healthy model remains, but both defaults could eventually be retired. Check the Vercel logs for `[gemini]` and benchmark a replacement before adding it. |
+| **Gemini model retirement** | Mitigated, not eliminated. Models are retired on Google's schedule (`gemini-2.0-flash` already was; `gemini-2.5-flash-lite` is listed but answers 404). The chain, logging and `failed` status make a retirement visible and self-healing while a healthy model remains, but both defaults could eventually be retired. Check the Vercel logs for `[gemini]` and benchmark a replacement before adding it. |
 | **No Content-Security-Policy** | Other security headers are set (§21.3); a CSP needs nonce plumbing for Next's inline scripts, so it isn't a one-line addition. |
 
 ---
@@ -1720,7 +1644,7 @@ Covered in [§21.9](#219-githubworkflowsciyml). The ordering — typecheck, then
 
 **Technical explanation:** every Server Action in this app is an `async function`; calling one returns a Promise that resolves once the database round-trip (or Gemini API call) completes. `await` pauses execution of the *calling* function until that Promise settles, while the JavaScript event loop remains free to do other work (like keep the UI responsive) in the meantime.
 
-**Where in this app:** `processVideoAI`'s `await analyzeVideoContent(context)` — this line does not block the entire server process; it suspends just this one function invocation while the network call to Google's API is in flight.
+**Where in this app:** `processVideoAI`'s `await analyzeVideo(…)` — this line does not block the entire server process; it suspends just this one function invocation while the network call to Google's API is in flight.
 
 ### 24.6 REST APIs vs. Server Actions
 
@@ -1999,9 +1923,9 @@ Every step above is real, traceable code in this repository — not a hypothetic
 
 ---
 
-## 28. The One-Take Editor
+## 29. The One-Take Editor
 
-### 28.1 Why this feature, and who it's for
+### 29.1 Why this feature, and who it's for
 
 The recorder in [§6](#6-the-recording-engine) captures a take; it can't fix one. For the people who record the most short technical videos (engineers walking through a PR, devrel recording a feature demo, a founder recording a bug repro), the real cost isn't recording. It's **re-recording**: one flubbed sentence or a 5-second "where was that tab" pause sends them back to the start. Full video editors are far too heavy for a throwaway 3-minute demo.
 
@@ -2009,7 +1933,7 @@ The editor's promise is *record messy, ship clean*. Record once. Tighten every p
 
 This feature was chosen over alternatives (AI auto-clipping into short-form clips, server-side compression or chunking, semantic search) because it addresses the most frequent pain for the target user, and because it can be built **entirely free to operate**. Every expensive step runs on the user's device.
 
-### 28.2 Architecture at a glance
+### 29.2 Architecture at a glance
 
 ```
 /video/[id]/edit  (Server Component: getEditorData, owner-only, else notFound())
@@ -2033,7 +1957,7 @@ This feature was chosen over alternatives (AI auto-clipping into short-form clip
 
 The pure logic in `lib/media/` (`edl.ts`, `silence.ts`, `align.ts`, `pauses.ts`, `history.ts`, `sanitize.ts`) has no browser or React dependencies, and is what the 61 editor unit tests exercise.
 
-### 28.3 The edit model: a non-destructive cut list
+### 29.3 The edit model: a non-destructive cut list
 
 An edit is an **Edit Decision List**: `{ version: 1, cuts: [{ start, end, reason }], pauseLevel }`, stored in `videos.edl` (`jsonb`). Three decisions shape it:
 
@@ -2043,7 +1967,7 @@ An edit is an **Edit Decision List**: `{ version: 1, cuts: [{ start, end, reason
 
 `edl.ts` provides the timeline math: `keptSegments`, `editedDuration`, `sourceToEdited` / `editedToSource` (to map the player's clock and seek bar), `nextPlayableTime` (where playback should jump when it enters a cut), and `subtractRange` (restore: removes a range from every cut, splitting partial overlaps).
 
-### 28.4 Getting audio without downloading the video
+### 29.4 Getting audio without downloading the video
 
 Cloudinary serves an **audio-only rendition** of any video when the URL's extension is swapped to `.mp3` (`audioRenditionUrl` in `lib/media/audio.ts`). Measured at ~100 kbps (~0.75 MB per minute), it's a fraction of the video's size. It's decoded with an `OfflineAudioContext` created at 16 kHz mono, which resamples during decode, so there's no resampling code at all. 16 kHz mono is exactly what Whisper needs, and plenty for loudness analysis.
 
@@ -2055,7 +1979,7 @@ Cloudinary serves an **audio-only rendition** of any video when the URL's extens
 
 If decoding fails, which is most often a recording made without a microphone, the editor says the video has no audio track, rather than showing a raw decoder error.
 
-### 28.5 Pause detection (`lib/media/silence.ts`)
+### 29.5 Pause detection (`lib/media/silence.ts`)
 
 1. **Loudness envelope:** RMS level in dBFS over 20 ms frames.
 2. **Adaptive threshold:** the 10th percentile of frame loudness estimates the noise floor and the 90th estimates speech level. The threshold sits 30% of the way from floor to speech, so a laptop mic in a café and a studio mic both work without a fixed −40 dB guess.
@@ -2066,7 +1990,7 @@ Detection runs once at the most sensitive setting (`MIN_DETECTED_PAUSE = 0.4 s`)
 
 **Measured against ffmpeg** (`silencedetect` at −40 dB) on a recording with 8 known pauses: all 8 were found and every edge was within ~60 ms. The differences fall on the safe side: detected pauses start slightly later and end slightly earlier, so speech edges aren't clipped.
 
-### 28.6 Transcription in the browser (`transcribe.worker.ts`)
+### 29.6 Transcription in the browser (`transcribe.worker.ts`)
 
 Whisper `tiny.en` (quantized to 8-bit, 41 MB, downloaded once from the Hugging Face Hub and cached by the browser) runs through transformers.js on the WASM backend, inside a Web Worker so the editor stays responsive. Word-level timestamps come from Whisper's cross-attention alignment. That's why the model is `Xenova/whisper-tiny.en`: the `onnx-community` export was tested and fails with "Model outputs must contain cross attentions".
 
@@ -2074,7 +1998,7 @@ Whisper processes 30-second windows. Rather than chopping blindly, `planTranscri
 
 Saving the transcript (`saveWordTranscript`) also rewrites the sentence-level `transcript` / `transcriptSegments` the rest of the app reads. Search, the transcript tab and AI chapters therefore improve too, including for **uploaded** videos, which had no transcript before. `processingStatus` is reset so the next view regenerates the AI summary from the better text.
 
-### 28.7 Correcting Whisper's word times (`refineWords` in `align.ts`)
+### 29.7 Correcting Whisper's word times (`refineWords` in `align.ts`)
 
 Whisper's word timestamps are approximate, and on test recordings they were wrong in two consistent ways:
 
@@ -2092,17 +2016,17 @@ The waveform is measured directly, so silence detection wins any disagreement:
 
 The regression test in `tests/align.test.ts` uses **real Whisper output** from a test recording and asserts that no word overlaps a pause, that phrases start at measured onsets, and that pause cuts never strike through a kept word.
 
-### 28.8 Cutting by text
+### 29.8 Cutting by text
 
 Selecting words (click, shift-click or drag) and pressing ⌫ calls `cutForWords`. The cut runs from the first selected word's start to the **next kept word's start**, so the pause after the deleted words goes with them. Otherwise deleting a sentence would leave a doubled silence. Pressing ⌫ on an already-cut selection restores it. Each pause appears in the transcript as a chip (e.g. `2.0s`) that toggles just that pause. The timeline supports the same cut and restore actions on a dragged time range, which is how material with no words (a silent screen fumble) is removed.
 
-### 28.9 Live preview and viewer playback
+### 29.9 Live preview and viewer playback
 
 Both the editor preview and `VideoPlayer` skip cuts on `requestAnimationFrame`. `timeupdate` fires only ~4 times a second, which would let up to a quarter second of removed audio leak through. rAF stops completely in a background tab while audio keeps playing, though (this was observed in testing), so `timeupdate` remains as a fallback. A backgrounded viewer hears at most ~0.25 s of a cut edge, not the whole cut.
 
 `VideoPlayer` shows the **edited** timeline everywhere: the clock, the seek bar (seeks map through `editedToSource`), ±5 s and digit-key jumps, and chapter ticks. Deep links and comment timestamps stay in source time, so they remain valid across re-edits. Two existing player bugs surfaced and were fixed along the way. On a server-rendered page, the browser could load metadata before hydration, so `onLoadedMetadata` was missed and the duration showed `0:00`. MediaRecorder WebM files report an `Infinity` duration until scanned, which is now handled via `durationchange`.
 
-### 28.10 Export: a real MP4, rendered on the device (`export.worker.ts`)
+### 29.10 Export: a real MP4, rendered on the device (`export.worker.ts`)
 
 **What was tried first:** rendering on Cloudinary with its splice transformation. Measured result: a single splice is accurate (10.045 s for a 10 s target), but chained splices of the same asset ignore every layer's end offset after the first. Three segments rendered as **26.4 s instead of 15 s**, and four as 32.8 s instead of 18 s. Splicing distinct derived assets returned HTTP 400. That made server-side rendering on the free stack a dead end.
 
@@ -2115,14 +2039,14 @@ Both the editor preview and `VideoPlayer` skip cuts on `requestAnimationFrame`. 
 
 **Measured:** a 33 s recording edited to 19.325 s exported as 19.313 s video and 19.320 s audio, and ffmpeg decoded it cleanly. Every tightened pause measured ~0.3 s, matching the configured padding. Rendering ~19 s of 720p took 3.0–3.4 s (5–6× real time) in Chromium. The dialog reports real progress, the negotiated codecs, the render speed, and the **actual** output size against the original's `Content-Length`, including when the output is larger (for example, on very compressible synthetic test video).
 
-### 28.11 Security and validation
+### 29.11 Security and validation
 
 - `getEditorData` returns `null`, and the page `notFound()`s, unless the caller owns the video. `saveEdit` and `saveWordTranscript` go through `requireOwnedVideo`, which reports "Video not found" for both missing and not-yours, so ids can't be probed.
 - All client input is untrusted. `sanitize.ts` rejects non-arrays and oversized payloads (≤ 40,000 words, ≤ 5,000 cuts, words ≤ 48 characters), drops malformed items, clamps times to the stored duration plus 2 s of slack, rounds to milliseconds and sorts.
 - `words` is excluded from every viewer payload (`buildVideoWithUserQuery` destructures it out), because viewers only need the cut list.
 - **Known limitation:** edits change what SnapCast *plays*, not the stored asset, so the original remains reachable at its Cloudinary URL. When removed material must not exist, export and re-upload the MP4.
 
-### 28.12 Clips, navigation and leaving the editor safely
+### 29.12 Clips, navigation and leaving the editor safely
 
 - **Clip links.** A selection's **Copy clip link** produces `/video/<id>?t=<start>&end=<end>` in source time (like `?t=` deep links, so it survives re-edits). `VideoPlayer` seeks to `t`, pauses at `end` (checked on the same rAF/`timeupdate` loop that skips cuts), marks the range on the seek bar, and offers **Watch full video**, which drops `end` from the URL. Replaying a finished clip restarts it; seeking more than 0.75 s past the end (or pressing play there) means the viewer wants the whole video, so clip mode ends instead of trapping them. If the clipboard is unavailable, the link is shown in a pre-selected field instead of failing silently.
 - **Clip export.** **Export clip** renders `clipSegments(kept, selection)` (`edl.ts`, unit-tested): only the kept material inside the selection, so a clip of an edited video is itself edited.
@@ -2130,7 +2054,7 @@ Both the editor preview and `VideoPlayer` skip cuts on `requestAnimationFrame`. 
 - **Navigation.** The navbar records route changes (`lib/navigation.ts`) as a mirror of the history stack. Returning to the page just below the top counts as a back navigation and pops, so landing from an email, opening the editor, and pressing the browser's back leaves no in-app page behind the landing page. `BackLink` uses `router.back()` only when there is one, and otherwise links to a parent (Library, Collections); `tests/navigation.test.ts` covers these cases. It's a real `<Link>`, so it works without JavaScript and middle-clicks open the parent.
 - **Owner nudge.** `EditNudge` invites owners of unedited videos into the editor (dismissible per video, stored in `localStorage`) and summarizes the edit on edited ones. Viewers never see it.
 
-### 28.13 Limitations, stated plainly
+### 29.13 Limitations, stated plainly
 
 | Limitation | Why | Mitigation |
 |---|---|---|
@@ -2144,7 +2068,7 @@ Both the editor preview and `VideoPlayer` skip cuts on `requestAnimationFrame`. 
 
 ---
 
-## 29. Accessibility and responsive baseline
+## 30. Accessibility and responsive baseline
 
 A UX audit of the live app found problems that a visual pass alone would miss. Each was fixed and verified in a browser with real keyboard events.
 
@@ -2167,3 +2091,493 @@ A UX audit of the live app found problems that a visual pass alone would miss. E
 **Responsive check.** Every screen was measured at 320, 375, 768, 1024 and 1280 px for horizontal overflow and off-screen elements, not just eyeballed.
 
 **Limits of this verification.** Behaviour was exercised with scripted keyboard events and real Tab/Enter key presses in a Chromium-based browser. It was not tested with a screen reader (VoiceOver, NVDA) or in Firefox/Safari.
+
+---
+
+## 31. SnapCast Studio: audio, captions, video, conversion
+
+Everything below was previously `docs/STUDIO.md`; it is now maintained here.
+
+The editor at `/video/[id]/edit` is a small studio for one recording. All of it runs in the browser and is free to run. No paid API is used for editing, and AI (Gemini) is used only for summaries and chapters, never to edit.
+
+It has four tabs:
+
+| Tab | What it does |
+|---|---|
+| **Transcript** | Whisper transcription on the device, cut by deleting words, tighten pauses |
+| **Captions** | Captions from the transcript, edited and styled, burned into exports or downloaded as SRT/VTT |
+| **Video** | Output shape (16:9, 9:16, 1:1, 4:5), fill/fit/blur, crop, brightness/contrast/saturation |
+| **Audio** | Gain, pitch shift, clean-up filters, noise gate, 10-band EQ, compressor, echo, reverb, limiter, fades, normalisation, presets |
+| **Tracks** | Multitrack audio: music, voiceover and sound-effect tracks; mute, level, replace or extract the original audio |
+
+Every change is non-destructive. The uploaded file is never modified. Everything shares one undo history (⌘Z / ⇧⌘Z) and one autosave. What you preview is what exports, because the preview and the exporter run the **same code**.
+
+---
+
+### 31.1 Architecture
+
+```
+                 lib/studio/*  (pure TypeScript, unit-tested in Node)
+   ┌───────────────┬────────────────┬───────────────┬────────────────┐
+   │ fx.ts dsp.ts  │ captions.ts    │ frame.ts      │ doc.ts         │
+   │ effect model  │ caption model, │ framing maths │ undoable doc:  │
+   │ + DSP engine  │ SRT/VTT,       │ + drawFrame   │ cuts, fx,      │
+   │               │ time mapping   │               │ captions, look │
+   │               │ captionRender  │               │                │
+   └──────┬────────┴───────┬────────┴──────┬────────┴────────────────┘
+          │                │               │
+   ┌──────▼─────────┐  ┌───▼───────────────▼──┐   ┌──────────────────────┐
+   │ AudioWorklet   │  │ Preview stage canvas  │   │ Export Web Worker    │
+   │ (live preview) │  │ (useStageRenderer)    │   │ (export.worker.ts)   │
+   │ engine injected│  │ video → drawFrame →   │   │ decode → drawFrame → │
+   │ as source text │  │ drawCaption           │   │ drawCaption → encode │
+   └────────────────┘  └──────────────────────┘   │ audio → same engine  │
+                                                  └──────────────────────┘
+```
+
+- **One engine, three callers.** `createAudioEngine` (lib/studio/dsp.ts) runs in the AudioWorklet for the live preview, in the export worker for the file, and in Vitest. The worklet can't import modules, so the engine is written to be self-contained and injected as source text (`worklet.ts`). A test rebuilds it the same way.
+- **One draw path for pictures.** `drawFrame` (framing) and `drawCaption` (captions) take any 2D context. The preview draws from the `<video>`. The exporter draws from decoded `VideoSample`s on an `OffscreenCanvas`. Positions and sizes are fractions of the frame, so a 330 px preview and a 1080 px export match. Measured: a caption's bounding box agreed to within 0.001 of the frame between preview and export.
+- **Source time everywhere.** Cuts, captions and word timings are stored in source time. Each consumer maps onto the edited timeline (`toEditedCaptions`, `captionsForSegments`). Undoing a cut therefore brings its captions back, and clip exports get captions on the clip's own timeline.
+
+### Persistence
+
+All settings live in the existing `videos.edl` jsonb column (`StoredEdl` in `drizzle/schema.ts`). No migration is needed:
+
+| Field | Contents |
+|---|---|
+| `cuts`, `pauseLevel` | Unchanged |
+| `audioFx?` | Audio Studio settings (`AudioFx`, version 1) |
+| `captions?` | `{ version, burnIn, captions[], style }`. Text and timings only |
+| `look?` | `{ version, aspect, fit, crop, focusX/Y, background, brightness, contrast, saturation }` |
+
+- Every new field is optional. Edits saved before a field existed load with defaults, and a `saveEdit` call that omits a field keeps the stored value rather than wiping it.
+- Everything is validated on the server: `sanitizeAudioFx`, `sanitizeCaptionTrack` and `sanitizeLook` clamp every number, drop unknown keys and never throw. Caption text is stripped of control and bidi-override characters.
+- Saves are owner-only (`requireOwnedVideo`).
+- **No media is ever stored in Postgres.** Rendered files exist only in the user's browser until they download them.
+
+---
+
+### 31.2 Audio Studio
+
+**Signal chain** (fixed order):
+
+input gain → pitch shift → high-pass → noise gate → 10-band EQ → low-pass → compressor → delay → reverb → output gain → look-ahead limiter
+
+Fades and peak normalisation are applied on the edited timeline, outside the per-sample chain.
+
+**Processing**
+
+- Always stereo. Mono sources are duplicated to two channels in both preview and export, so stereo effects sound the same in both.
+- Export decodes the source audio at **its own sample rate** (never the 16 kHz analysis copy), trims it sample-accurately at each cut, processes it, compensates the engine's latency and applies fades.
+- Normalisation is two-pass: the first pass measures the peak, the second applies the gain (capped at +24 dB).
+
+**AAC priming fix (all MP4 exports)**
+
+- AAC encoders add priming samples. Without an edit list, every export played its audio about 44 ms late.
+- The exporter now measures the encoder's delay (it encodes a click, decodes it and finds the click) and shifts the audio timestamps. mediabunny then writes an `elst` box.
+- Verified: a click at 8.000 s in the source is at 8.0000 s in the export.
+
+**Pitch shift.** This is a manual shift in semitones (±12). It is *not* pitch correction: it never retunes notes to a key.
+
+- Two read heads play the input at the pitch ratio, with sin² crossfades.
+- When a head restarts, it searches up to 12.5 ms for the offset whose waveform matches the other head (the WSOLA idea), so the crossfade adds no phase jump.
+- Measured: 220 Hz shifted by ±3, −4 and ±12 semitones lands within 0.5% of the target.
+- A worst-case 128-frame block takes about 1 ms of the 2.67 ms real-time budget.
+- Formants move with the pitch, so large shifts sound unnatural.
+
+**Measured on exported files** (ffmpeg and Python, against a test file with a 100 Hz tone, a 3 kHz tone and a click at 8.000 s):
+
+| Effect | Result |
+|---|---|
+| High-pass 1 kHz | 100 Hz −40.0 dB, 3 kHz −0.1 dB |
+| Echo 250 ms | Repeat at exactly +250 ms, equal level at 50% mix |
+| Limiter at −6 dBFS with +12 dB drive | Peak exactly −6.00 dBFS |
+| Pitch +12 st | 100 Hz → 200 Hz; click at 7.9988 s (latency compensated) |
+| WAV export of a 10 s edit | Exactly 10.000 s |
+| Untouched video | Audio passes through unprocessed (faithful copy) |
+
+**Presets**
+
+- Voice presets: Clean Podcast, Professional Narration, Studio Vocal, Singing, Concert, Lo-Fi, Robotic (a comb filter), Bright, Warm, Deep Voice (−4 st).
+- Also EQ, reverb and delay presets.
+- Your own presets are saved in the browser's `localStorage`.
+
+---
+
+### 31.3 Captions
+
+- **Generate.** Captions are built from the word transcript. A new caption starts after a sentence end, a pause longer than 0.6 s, the word limit, or 4 s of speech.
+- **Edit.** Edit text, split at the midpoint, merge with the next caption, delete, add one at the playhead, and nudge the start or end by 50 ms. Neighbours never overlap. Changing the text keeps word timings when the word count is unchanged; otherwise the words are spread evenly across the caption.
+- **Templates.** Classic, Bold Reels, Karaoke, Word Pop, Modern Creator and Minimal. Each one sets font, size, weight, case, colours, outline, shadow, background panel, position, safe margin, words per line, lines and animation, and every setting can be edited.
+- **Animations.**
+  - Karaoke: highlights the spoken word.
+  - Word pop: each word scales in as it's spoken.
+  - Reveal: words appear one by one.
+  - Fade: the caption fades in and out.
+- **Burn-in.** The export composites each frame on an `OffscreenCanvas`. Screen recordings are often variable-frame-rate: a static screen can hold a single frame for seconds. Held frames are therefore split into 1/30 s steps whenever captions are drawn. Verified: a source with 5 frames in 10 s exported as 300 frames, with words popping in during a single source frame.
+- **SRT / WebVTT.** Both are written on the edited timeline. VTT cue text is escaped, so caption text can't inject markup or fake a timing line.
+- **Fonts.** Inter, Montserrat and Bebas Neue are self-hosted in `public/fonts/captions` (SIL OFL 1.1, licence files alongside) and loaded with `FontFace` in both the page and the worker. Static font files bypass the auth middleware so the worker can fetch them.
+
+---
+
+### 31.4 Video
+
+- **Shapes.**
+  - Original, 16:9, 9:16, 1:1 and 4:5.
+  - The export preset bounds the **short side**, so 720p vertical is 720×1280.
+  - Output never exceeds the source's resolution.
+- **Fill modes.**
+  - Fill: crops to the frame, with a focus point that picks what stays in view.
+  - Fit: shows the whole picture, with coloured bars.
+  - Blur: shows the whole picture over a blurred, dimmed copy of itself.
+- **Crop and colour.** Crop with four trims (minimum 10% of the frame). Brightness, contrast and saturation from −100 to +100, applied as canvas filters.
+- **Preview.**
+  - With no framing, the native video shows and only captions are drawn over it.
+  - With framing, a canvas paints every frame from the playing (invisible) video.
+  - The paused frame is painted with `requestVideoFrameCallback`. This was measured: Chrome's `loadeddata` fires before a frame can be drawn.
+- **Verified.**
+  - 9:16 + blur + captions exported at 720×1280.
+  - 1:1 fill with the focus at the right edge exported exactly the right-most 720×720 of the source, at −30% brightness.
+
+---
+
+### 31.5 Tracks (multitrack audio)
+
+- **Model.** `edl.mix` holds:
+  - the original audio's level and mute (the original follows the cut list);
+  - up to 8 added tracks (music, voiceover, sound effects) of clips.
+- **Clip timing.** Clips sit on the **edited** timeline, so a music bed doesn't jump when you remove a pause. Each clip plays `[in, out)` of its file starting at `start`, with its own level and fades. Tracks have a level and a mute.
+- **Editing.**
+  - Drag a clip to move it; it never overlaps its neighbours.
+  - Drag its edges to trim. The left edge moves the in-point, like any editor.
+  - Split at the playhead, delete, and undo all of it.
+- **Original audio.**
+  - **Replace…** mutes the original and opens a new voiceover track.
+  - **Extract (WAV)** exports the edited original with no effects and no added tracks.
+- **Storage.**
+  - Files upload from the browser straight to Cloudinary (`snapcast/audio/<videoId>/`) with a server signature. The server never handles the audio.
+  - Each file is decoded in the browser first, which checks it is playable and measures its duration. Files are capped at 50 MB.
+  - The server only accepts clip URLs inside that video's own folder on the configured account.
+  - Deleting a video deletes the folder.
+- **One mixer.**
+  - Export: `mixInto` (`lib/studio/tracks.ts`) adds clips sample by sample, indexed by absolute frame, so block boundaries never shift a clip. The added tracks join after the Audio tab's effects chain, which processes only the recording's own voice. Master fades and normalisation then apply to the whole mix.
+  - Preview: `useMixPreview` schedules `AudioBufferSourceNode`s with the same gains and fades on the preview's master bus. It resyncs if the audio clock drifts more than 60 ms from the video.
+- **Verified in exported files** (WAV and MP4, measured):
+  - A clip placed at 4.0 s with in-point 1.0 s starts at 4.0000 s and ends at 7.0000 s.
+  - A −6 dB sound-effects track measures exactly half amplitude.
+  - The muted original is absent.
+  - A cut moves the original but not the added clips.
+  - Live preview schedules each clip once per play, at the right offset.
+- **Clip exports.** Added audio is shifted onto the clip's own timeline.
+
+### 31.6 Convert (video ↔ audio)
+
+The **Convert** page (`/convert`) works on any local file, and nothing is uploaded. The editor's export dialog also offers the same audio formats for the edited video.
+
+- **Video → audio:** MP3, M4A (AAC), Opus (Ogg) or WAV, with bitrates from 64 to 320 kbps (Opus up to 256) and a size estimate before converting.
+  - AAC and Opus use the browser's WebCodecs encoders.
+  - WAV is written directly.
+  - MP3 uses LAME compiled to WebAssembly (`@mediabunny/mp3-encoder` 1.62.1). The wrapper is MPL-2.0 and LAME itself is LGPL; it's loaded as a separate WASM module and is unmodified.
+- **Audio → video:** an MP4 (H.264 + AAC) with:
+  - a solid colour or an image background, optionally dimmed;
+  - an animated **spectrum-bar** or **waveform** visualizer, or none;
+  - an optional title, Latin or Devanagari;
+  - shapes for Reels/Shorts/TikTok (9:16), YouTube (16:9), square and 4:5;
+  - 480p/720p/1080p, three quality levels, 24/30/60 fps and an audio bitrate choice.
+
+  The live preview and the encoder share one renderer (`lib/studio/visualizer.ts`): an FFT on a 24 kHz mono analysis signal.
+- **Measured** with a click at exactly 1.000 s in the source:
+
+  | Output | Click lands at |
+  |---|---|
+  | M4A, Opus, WAV | 1.000–1.001 s |
+  | Audio → video MP4 | 1.0000 s |
+  | MP3 output | 1.026 s |
+
+  - Every file's duration matches its source.
+  - The size estimate was 237 KB for a 236 KB MP3.
+- **Two timing bugs found and fixed:**
+  - mediabunny doesn't remove the MP3 encoder/decoder delay or the AAC priming of *inputs*, so converted audio ran 23–49 ms late. SnapCast now trims negative-timestamp priming, and reads the LAME tag's encoder delay (+529 decoder samples) for MP3 inputs (`lib/media/gapless.ts`).
+  - The same fix applies to MP3 files used as multitrack clips: a click clip placed at 2.0 s now lands at 3.0000 s in WAV and MP4 exports.
+- **Limitations:**
+  - **MP3 outputs** start ~25 ms late in players, because mediabunny's MP3 writer has no room for the LAME gapless header. It's leading silence, and video exports use AAC, so A/V sync is unaffected.
+  - **Bitrate** is a target. AAC uses fewer bits than requested on very simple material such as a pure tone, so estimates are an upper bound there.
+  - **Memory:** files are decoded in memory. Practical limits are about 30 minutes of audio with a visualizer, longer without one.
+
+### 31.7 Vocal / instrumental separation
+
+In **Convert → Vocals / Instrumental**, any local song or video can be split into vocals and instrumental on the device. You can play a live remix with independent levels (or either part solo) and download vocals, instrumental or the remix as MP3/M4A/Opus/WAV.
+
+- **Model.** Spleeter 2-stems (Deezer, **MIT**), int8 ONNX export by the sherpa-onnx project (**Apache-2.0**). It is two U-Nets, about 26 MB each, downloaded once from Hugging Face and kept in Cache Storage. It runs in a worker on onnxruntime-web (WASM, MIT); onnxruntime-web is now a declared dependency, at the same version transformers.js already used. No API, no quota.
+- **Signal path** (`lib/studio/separate.ts`, pure TypeScript):
+  1. STFT: Hann 4096, hop 1024, 44.1 kHz.
+  2. The models run on blocks of 512 frames × 1024 bins.
+  3. Ratio masks are applied to the full complex STFT, then an inverse STFT.
+- **Differences from the reference implementation:**
+  - The reference zeroes everything above 11 kHz; SnapCast extends the masks there instead, so cymbals and air survive.
+  - Blocks are processed one at a time, so memory stays bounded.
+  - Tests prove vocals + accompaniment = input exactly, whatever the models output.
+- **Measured.** Synthetic speech over a synthetic music bed, SDR against the true stems, in the browser:
+
+  | Stem | Unseparated mix | Separated |
+  |---|---|---|
+  | Vocals | 3.9 dB | **11.2 dB** |
+  | Instrumental | −3.9 dB | **7.4 dB** |
+
+  - Remixing both stems at 0 dB reconstructs the original at 56 dB SDR.
+  - Speed: 8× real time in the browser (single-threaded WASM) and 19× in Node.
+  - With onnxruntime-node the same mix scored 7.5 / 3.7 dB. The int8 kernels differ between runtimes.
+- **Limitations:**
+  - Spleeter is a 2019 model, so expect audible bleed: reverb tails and some instruments leak into the vocals. Demucs separates better but is several times larger and slower in a browser.
+  - The whole file is decoded in memory (about 30 minutes at most).
+  - Results are reused within the session; they aren't stored on the server.
+  - Separating a video's *original* audio into editable tracks inside the editor is not built yet. It needs stems that follow the cut list.
+
+### 31.8 Pitch correction
+
+**Audio → Pitch correction** in the editor: pick a key and scale (chromatic, major, natural/harmonic minor, major/minor pentatonic, blues), a strength and a retune speed. A live readout shows the detected pitch, the target note and the correction. It combines with the manual pitch shift.
+
+- **How it works** (inside the shared engine, so preview and export match):
+  1. YIN pitch detection runs on a 16 kHz decimated mono copy every 256 samples (65–1000 Hz).
+  2. The nearest note of the chosen key and scale is picked, with hysteresis so the target doesn't flicker between neighbours.
+  3. The correction in cents is scaled by strength and smoothed by the retune time (0 ms = instant, robotic).
+  4. It drives the WSOLA pitch shifter with a time-varying ratio.
+  5. Short unvoiced gaps hold the correction, then release it.
+- **Delay alignment.** The shifter reads the audio exactly as far back as the detector's analysis window, so each correction lands on the audio it was computed for.
+  - Without this, correction trailed 5 Hz vibrato and removed little of it (23 → 18 cents spread).
+  - With it, the spread drops to 3 cents.
+  - This adds about 25 ms of latency, which exports compensate.
+- **Measured:**
+  - Unit tests: a 452 Hz tone in C major lands within 5 cents of A4. 475 Hz goes to A♯ in chromatic and to B in C major. In D major, F goes to F♯. Half strength corrects half-way. A slow retune arrives later.
+  - Exported WAV: a sharp note with vibrato moved from +46 to −0.9 cents mean. 475 Hz moved from −67.5 to −0.4 cents.
+  - Cost: worst 128-sample block 0.37 ms of the 2.67 ms real-time budget.
+- **Limitations:**
+  - It is monophonic: one voice. Chords, doubled vocals or loud backing confuse the detector (separate the vocals first).
+  - Formants shift with the correction; this is fine for small corrections.
+  - There is no note-by-note graphical editing.
+
+### 31.9 Transcription languages
+
+Choose the spoken language before transcribing: **Auto-detect (English/Hindi)**, **English**, **Hindi**, **Sanskrit** or **Hinglish** (mixed). Everything runs in the browser with OpenAI Whisper weights (MIT) via transformers.js (Apache-2.0):
+
+| Choice | Model | Download | What it does |
+|---|---|---|---|
+| English | `Xenova/whisper-tiny.en` (q8) | ~41 MB | As before |
+| Hindi, Sanskrit, Auto, Hinglish | `Xenova/whisper-small` (q8, multilingual) | ~240 MB, once, cached | Word timestamps in all modes |
+
+**What was found while building it:**
+- **No language detection in transformers.js.** Without a language, it silently decodes multilingual audio as English. That *translated* a Hindi sample into English text.
+  - SnapCast detects language itself from Whisper's first decoder step.
+  - Detection is restricted to English and Hindi. Hindi is often mistaken for Urdu, which would switch the output to Arabic script.
+- **Sanskrit can't be detected**: a Sanskrit verse scored English 0.81, Sanskrit 0.01. Decoding with Whisper's own Sanskrit token writes romanized Latin. Sanskrit mode therefore decodes with the Hindi token, which gives Devanagari.
+- **Whisper writes one language per call.** Forced to Hindi, English words come out transliterated into Devanagari ("which makes" → "विछ मेख्स").
+  - **Hinglish mode:** each window is decoded as Hindi for context. The window is also split into phrases at short pauses, and each phrase's language is detected. Phrases detected as English are decoded again in English and spliced in by word timestamp.
+  - A language switch with **no pause** can't be separated, so English words inside a Hindi phrase stay in Devanagari.
+- **Hindi punctuation.** The danda (।, ॥) ends sentences and captions.
+- **Fonts.** Captions use Noto Sans Devanagari (OFL), self-hosted, as the second font in every caption style. Latin keeps the template font, Devanagari gets Noto, in both preview and export.
+
+**Measured accuracy** (character error rate against the script read aloud, Node CPU). The test speech is synthetic (macOS voices Samantha, Lekha and Rishi); real voices, accents and microphones will differ:
+
+| Sample | Mode | CER | Script | Speed |
+|---|---|---|---|---|
+| English | English / Auto | 0.000 | Latin ✓ | 10.7× / 2.3× real time |
+| Hindi | Hindi / Auto (detected hi, p=0.98) | 0.112 | Devanagari ✓ | ~2× |
+| Sanskrit verse | Sanskrit | 0.219 | Devanagari ✓ | ~2× |
+| Hinglish (clauses switch at pauses) | **Hinglish** | **0.034** | Devanagari + Latin ✓ | 0.9× |
+| same | Hindi only | 0.404 | English transliterated ✗ | 1.8× |
+| Hinglish (English words mid-phrase) | Hinglish | 0.235 | English clause Latin ✓; "SnapCast", "feature" stay Devanagari | 0.9× |
+
+**Browser check:** the multilingual model ran end to end in the editor:
+- Hindi + Hinglish + English: 23 s of audio.
+- The download plus first run took a few minutes; the model is cached afterwards.
+- Captions were generated with karaoke highlighting.
+- SRT/VTT written in UTF-8 with the right scripts.
+- An MP4 with Devanagari captions burned in rendered correctly.
+
+**Limitations:**
+- The multilingual model is about 6× larger and much slower than the English one. Hinglish runs at roughly real time, because English phrases are decoded twice.
+- Sanskrit spelling is phonetic (sandhi, visarga and vowel length are often wrong); expect to correct captions.
+- Hindi spelling errors are common on proper nouns and English loanwords.
+- Filler words aren't transcribed reliably in any language.
+
+### 31.10 What is implemented, and what is not
+
+**Implemented and verified in exported files**
+
+- Audio:
+  - All effects, presets and fades listed above.
+  - Normalisation.
+  - Before/After and live preview.
+  - Saved settings and custom presets.
+  - WAV export.
+  - Manual pitch shift.
+- Captions: generation, editing, six templates, animations, burn-in, SRT/VTT, sync after cuts.
+- Video: aspect presets, fill/fit/blur, crop, reposition, colour adjustments.
+
+**Not implemented** (deferred; not offered in the UI)
+
+| Feature | Why / what it needs |
+|---|---|
+| Formant-preserving pitch shift | Needs spectral-envelope processing (e.g. LPC or a phase vocoder). |
+| Automatic ducking (music dips under speech) | Track levels are manual today. |
+| Text and image overlays | Fits the existing `drawFrame` → canvas path, but there is no overlay model or UI yet. |
+| Timeline improvements (zoom, track lanes, caption blocks on the timeline) | Not started. |
+| Effects on the public video page | Viewers see cuts only. Audio effects, captions and framing appear in exported files, not in the hosted player. |
+| Loudness normalisation in LUFS | Normalisation is peak-based. |
+
+---
+
+### 31.11 Licences
+
+**One npm dependency was added for the studio:** `@mediabunny/mp3-encoder` (MP3 export; browsers can't encode MP3 natively).
+
+**Algorithms** (implemented from their published descriptions)
+
+| Algorithm | Source / status |
+|---|---|
+| Biquad filters | Robert Bristow-Johnson, "Audio EQ Cookbook" (published formulas) |
+| Reverb | Freeverb topology, Jezar at Dreampoint (public domain) |
+| Pitch-shift splice alignment | WSOLA concept (Verhelst & Roelands, 1993), independently implemented |
+| Compressor, gate, look-ahead limiter | Standard feed-forward designs |
+
+**Assets**
+
+| Asset | Licence |
+|---|---|
+| Inter, Montserrat, Bebas Neue, Noto Sans Devanagari fonts (Fontsource 5.3.0 builds) | SIL Open Font License 1.1, licence files in `public/fonts/captions/` |
+| Whisper `Xenova/whisper-tiny.en` and `Xenova/whisper-small` weights | MIT (OpenAI Whisper) |
+
+**Runtime dependencies** (versions as installed)
+
+| Package | Licence |
+|---|---|
+| next 15.5.28, react / react-dom 19.1.0 | MIT |
+| @mediabunny/mp3-encoder 1.62.1 | MPL-2.0 (bundles the LGPL LAME encoder as WebAssembly) |
+| onnxruntime-web 1.31.0-dev (already used by transformers.js) | MIT |
+| Spleeter 2-stems weights (Deezer), ONNX export by sherpa-onnx | MIT (weights), Apache-2.0 (export) |
+| mediabunny 1.62.1 | MPL-2.0. Used unmodified; file-level copyleft applies only to changes to its own files |
+| @huggingface/transformers 4.3.1 | Apache-2.0 |
+| drizzle-orm 0.45.4 | Apache-2.0 |
+| better-auth 1.7.12, @neondatabase/serverless 1.2.0, cloudinary 2.11.0, clsx, tailwind-merge | MIT |
+| @google/generative-ai 0.24.1 | Apache-2.0 |
+| dotenv 16.5.0 | BSD-2-Clause |
+
+**The repository itself has no LICENSE file yet.** To publish SnapCast as open source, the owner needs to choose a licence (for example MIT, Apache-2.0 or AGPL-3.0) and add it. All dependencies above are compatible with any of those.
+
+---
+
+### 31.12 Proprietary or hosted services still in use
+
+| Service | Used for | Required? |
+|---|---|---|
+| **Cloudinary** | Video storage and delivery, thumbnails, the audio-only rendition used for analysis | Yes, today |
+| **Neon** | Hosted Postgres (Postgres itself is open source) | Any Postgres works |
+| **Vercel** | Hosting | Any Node host works (`next start`) |
+| **Google OAuth** | Sign-in | Yes, today (the only provider configured) |
+| **Google Gemini** | AI summaries and chapters only. Never editing | Optional |
+| **Hugging Face Hub, jsDelivr** | First-time download of the Spleeter models (~52 MB), the Whisper models (41 MB English, ~240 MB multilingual) and the ONNX WASM runtime, then cached | Yes, today |
+| **Cloudinary (added audio)** | Uploaded music / voiceover / effect files for the Tracks tab | Yes, when tracks are used |
+
+### 31.13 Self-hosting migration plan
+
+The editing studio is already fully client-side, so it needs no changes. The steps below replace the hosted services around it, cheapest first:
+
+1. **Hosting.** Build and run with `next build && next start` in a Node 20+ container behind any reverse proxy. Nothing depends on Vercel-specific APIs.
+2. **Database.** Point `DATABASE_URL` at any Postgres 15+.
+   - Swap the `@neondatabase/serverless` driver in `drizzle/db.ts` for `postgres` (postgres.js) or `pg` with the matching Drizzle adapter.
+   - Schema and queries are unchanged. Run the existing Drizzle migrations.
+3. **Sign-in.** better-auth supports email and password, GitHub and generic OIDC. Enable email/password, or point OIDC at a self-hosted Keycloak or Authentik, and remove the Google provider.
+4. **Model and WASM CDNs.**
+   - Serve the Whisper files and onnxruntime-web's WASM from `public/`.
+   - Set `env.localModelPath` / `env.allowRemoteModels = false` and `env.backends.onnx.wasm.wasmPaths` in `lib/media/transcribe.worker.ts`.
+5. **Media storage (the largest step).** Replace Cloudinary with S3-compatible storage (MinIO, Garage or any S3) and an ffmpeg worker that runs on upload. The worker produces:
+   - an H.264/AAC MP4 with `+faststart`;
+   - a JPEG thumbnail;
+   - the mono MP3 audio rendition that the editor's analysis downloads.
+
+   The upload flow then signs S3 PUTs instead of Cloudinary uploads. The editor and exporter only need a CORS-enabled URL (`Access-Control-Allow-Origin` and byte-range requests), because export and the Web Audio preview read the video cross-origin.
+6. **AI summaries (optional).** Point the summary step at a local model (e.g. an Ollama endpoint), or turn it off. Editing doesn't use it.
+
+### 31.14 Known limitations
+
+- Export buffers the output file in memory. The practical ceiling is about 30–45 minutes of 720p.
+- More than two audio channels are folded to the first two.
+- Canvas filters (colour adjustments, blur background) need `ctx.filter`. Without it, adjustments are skipped and the blur background falls back to a dimmed copy, in both preview and export.
+- Burned-in captions use the self-hosted fonts. If they can't be fetched (offline), preview and export both fall back to a system sans-serif.
+- Custom audio presets are per-browser (`localStorage`).
+- Export was verified in Chromium. Firefox and Safari ship WebCodecs but weren't tested here.
+
+### 31.15 Verifying
+
+```bash
+npm test          # 236 unit tests: DSP, pitch correction, separation, conversion, captions, languages, tracks, framing, history, EDL, alignment, AI, …
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+Exports were checked by rendering in the browser and measuring the files with ffmpeg: frame grabs, tone frequencies, click timing, durations and stream properties.
+
+---
+
+## 32. Design system and branding
+
+### 32.1 Direction
+
+The visual direction is **Spatial UI with tactile, skeuomorphic controls**: surfaces sit on a soft, lit canvas at distinct elevations, and the controls look physical.
+
+- **Raised:** buttons and knobs have a lit top edge, a contact shadow and a pressed state.
+- **Recessed:** fields, segmented controls and slider tracks are inset wells.
+- **Studio deck:** the editor's stage and timeline are a dark deck, so the picture and the waveform pop the way they do in a professional editor.
+
+Glassmorphism is limited to the sticky navigation bar. There is no animation library: motion is short CSS transitions, and all of it is disabled under `prefers-reduced-motion`.
+
+### 32.2 Tokens (`app/globals.css`, "SnapCast Studio design system (v2)")
+
+All colours, elevations and control styles come from `--sc-*` custom properties on `:root`. The older Tailwind theme colours (`--color-pink-100`, `--color-dark-100`, …) are mapped onto them, so existing utility classes follow the new palette.
+
+| Group | Tokens |
+|---|---|
+| Ink and text | `--sc-ink` #17132b, `--sc-ink-2`, `--sc-muted` #67617f |
+| Surfaces | `--sc-canvas` #f3f1f8, `--sc-surface` #fff, `--sc-surface-2`, `--sc-line`, `--sc-line-strong` |
+| Brand | `--sc-accent` #f2367f, `--sc-accent-hi` #ff5fa2, `--sc-accent-2` #ff7a3d (coral), `--sc-violet` #5b42d6 |
+| Deck (dark studio surfaces) | `--sc-deck` #16122a, `--sc-deck-2`, `--sc-deck-text`, `--sc-deck-muted`, `--sc-deck-line` |
+| Elevation | `--sc-e1` (resting), `--sc-e2` (raised/hover), `--sc-e3` (dialogs), `--sc-inset` (wells) |
+| Controls | `--sc-btn` / `--sc-btn-shadow` (neutral tactile), `--sc-primary` / `--sc-primary-shadow` (accent), `--sc-focus` |
+| Shape | `--sc-r-sm` 10px, `--sc-r` 14px, `--sc-r-lg` 20px |
+
+### 32.3 Components
+
+The design layer restyles the existing shared classes in place, so there's no second component library:
+
+| Component | Treatment |
+|---|---|
+| Buttons (`.ed-btn`, `.primary-btn`, `.playlist-create-btn`, …) | Tactile neutral, or the accent gradient for primary; 1 px press on `:active` |
+| Video and playlist cards | Lift on hover |
+| Dialogs | `--sc-e3` elevation, 22 px radius |
+| Fields | Recessed; accent ring on focus |
+| Range sliders | Global: inset track and a machined knob, with a focus ring on the knob |
+| Switches | Recessed track, raised knob, glowing accent when on |
+| Segmented controls (`.ed-seg`, `.ex-seg`, the Convert modes) | A well with a raised selection |
+| Studio editor | The stage and the timeline are the dark deck (the timeline reads its waveform colours from `--tl-*` variables, so the canvas follows). The tool panel is a raised surface with a segmented tab strip |
+| Sign-in | A branded deck panel: a stacked card on small screens, half the page from 1024 px |
+
+**Accessibility.** There is one keyboard focus ring (`:focus-visible`, a 2 px accent outline) across links, buttons, fields and tab stops. Text contrast is kept at AA on both the light surfaces and the deck: the deck's muted text #a7a0c6 on #16122a is about 7:1.
+
+### 32.4 Logo, favicon and metadata
+
+- **Mark.** A rounded tile in a deep violet-to-ink gradient with a top sheen and an inner rim (the tactile part). Inside are a pink→coral play triangle (video) and three white waveform bars (audio). It stays legible at 16 px.
+- **Files:**
+  - `public/assets/icons/logo.svg`: the full-colour mark, used by the navbar, sign-in, the share page, error pages and not-found.
+  - `public/assets/icons/logo-mono.svg`: white, for dark backgrounds.
+  - `app/icon.svg`: the favicon.
+  - `app/apple-icon.tsx`: a 180×180 PNG.
+  - `app/opengraph-image.tsx`: the 1200×630 social card.
+
+  The last two are generated by `next/og` at build time with no extra dependency, from the shared `BrandMark` in `app/brand.tsx`.
+- **Lockup.** "SnapCast" in Satoshi Black plus a small "Studio" tag. The tag hides alongside the wordmark below 420 px.
+- **Metadata.**
+  - Title: "SnapCast Studio: record, edit and share video in your browser", with the template "%s | SnapCast Studio".
+  - `applicationName`: "SnapCast Studio".
+  - `themeColor`: #15112b.
+  - Open Graph and Twitter titles and descriptions now cover captions, languages, the audio studio and conversion.
