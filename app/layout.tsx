@@ -21,6 +21,7 @@ export const metadata: Metadata = {
   applicationName: "SnapCast Studio",
   icons: {
     icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/apple-icon", sizes: "180x180", type: "image/png" }],
   },
   openGraph: {
     type: "website",
