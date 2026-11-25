@@ -2531,11 +2531,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 18px; background: v
 
 /* ── Surfaces ───────────────────────────────────────────────────────────── */
 .header .header-container, .upload-page form, .cv-panel, .cv-result, .ed-side, .ex-dialog, .share-modal, .signin-card, .analytics-panel,
-.empty-state, .comments-section, .video-details .video-info, .playlist-card, .note-card, .record .dialog .dialog-content {
+.empty-state, .comments-section, .video-details .video-info, .playlist-create-card, .playlist-card, .note-card, .record .dialog .dialog-content {
   background: var(--sc-surface) !important; border: 2px solid var(--sc-border) !important; box-shadow: 6px 6px 0 var(--sc-hard) !important;
 }
 .header .header-container { padding: clamp(18px, 4vw, 34px); }
-.analytics-card, .as-sec, .ed-card, .cv-row, .ex-preset, .vs-aspect, .cs-tpl, .ts-track {
+.analytics-card, .as-sec, .ed-card, .ex-preset, .vs-aspect, .cs-tpl, .ts-track {
   background: var(--sc-surface); border: 2px solid var(--sc-border) !important; box-shadow: none !important;
 }
 .as-sec.is-open { box-shadow: 4px 4px 0 var(--sc-hard) !important; }
@@ -2664,3 +2664,29 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 18px; background: v
 .ed-script-head .ed-hint { flex: 1 1 220px; min-width: 0; }
 .ed-script-head .ed-retranscribe { flex: 0 1 auto; flex-wrap: wrap; }
 .ed-stage .ed-levels button.is-on span, .ed-stage .ed-levels button[aria-checked="true"] span { color: #111110 !important; }
+
+/* Mobile pass: Convert, Collections, Upload. */
+/* Disabled actions: clearly off, not a faded orange. */
+:is(.ed-btn, .primary-btn, .submit-button, .playlist-create-btn, .comment-post-btn, .note-save-btn, .note-add-btn):disabled,
+:is(.ed-btn, .primary-btn, .submit-button, .playlist-create-btn, .comment-post-btn, .note-save-btn, .note-add-btn)[aria-disabled="true"] {
+  opacity: 1 !important; cursor: not-allowed; color: var(--sc-muted) !important; background: var(--sc-surface-2) !important;
+  box-shadow: inset 0 0 0 2px var(--sc-muted) !important; transform: none !important;
+}
+.playlist-create-card { padding: clamp(16px, 4vw, 24px); }
+.playlist-create-btn { padding: 0.7rem 1.2rem; }
+/* Drop zones: a dashed ink frame that fills orange-tinted on hover. */
+.file-input figure, .file-input > div {
+  border: 2px dashed var(--sc-border) !important; background: var(--sc-surface); transition: background 0.1s;
+}
+.file-input > div { border-style: solid !important; }
+.file-input figure:hover { background: var(--sc-accent-soft); }
+.file-input figure p { color: var(--sc-ink); font-weight: 700; }
+/* Native file pickers styled as buttons. */
+input[type="file"] { font: inherit; font-size: 0.85rem; color: var(--sc-muted); max-width: 100%; }
+input[type="file"]::file-selector-button {
+  margin-right: 12px; padding: 9px 14px; font: inherit; font-weight: 800; cursor: pointer;
+  color: var(--sc-ink); background: var(--sc-surface); border: 0; box-shadow: inset 0 0 0 2px var(--sc-border), 3px 3px 0 var(--sc-hard);
+}
+input[type="file"]::file-selector-button:active { transform: translate(3px, 3px); box-shadow: inset 0 0 0 2px var(--sc-border); }
+.cv-file { gap: 10px; }
+.cv-row select, .cv-row input[type="text"] { border-radius: 0; padding: 10px 12px; }
