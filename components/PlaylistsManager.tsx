@@ -7,6 +7,7 @@ import {
   createPlaylist,
   deletePlaylist,
 } from "@/lib/actions/playlists";
+import ConfirmButton from "./ConfirmButton";
 
 const PlaylistsManager = () => {
   const [playlists, setPlaylists] = useState<PlaylistWithCount[]>([]);
@@ -33,7 +34,6 @@ const PlaylistsManager = () => {
   };
 
   const handleDelete = (id: string) => {
-    if (!confirm("Delete this playlist? Videos are not deleted.")) return;
     startTransition(async () => {
       await deletePlaylist(id);
       setPlaylists((prev) => prev.filter((p) => p.id !== id));
@@ -82,13 +82,15 @@ const PlaylistsManager = () => {
                   {p.videoCount} {p.videoCount === 1 ? "video" : "videos"}
                 </span>
               </Link>
-              <button
+              <ConfirmButton
                 className="playlist-delete-btn"
-                onClick={() => handleDelete(p.id)}
-                aria-label="Delete collection"
+                ariaLabel="Delete collection"
+                question="Delete this collection? Videos stay."
+                confirmLabel="Delete"
+                onConfirm={() => handleDelete(p.id)}
               >
                 ×
-              </button>
+              </ConfirmButton>
             </li>
           ))}
         </ul>

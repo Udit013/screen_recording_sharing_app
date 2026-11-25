@@ -11,6 +11,7 @@ import {
   deletePlaylist,
   removeVideoFromPlaylist,
 } from "@/lib/actions/playlists";
+import ConfirmButton from "./ConfirmButton";
 
 interface PlaylistDetailProps {
   playlistId: string;
@@ -62,7 +63,6 @@ const PlaylistDetail = ({ playlistId }: PlaylistDetailProps) => {
   };
 
   const handleDeletePlaylist = () => {
-    if (!confirm("Delete this collection? Videos are not deleted.")) return;
     startTransition(async () => {
       await deletePlaylist(playlistId);
       router.push("/playlists");
@@ -145,12 +145,14 @@ const PlaylistDetail = ({ playlistId }: PlaylistDetailProps) => {
                 <button onClick={() => setEditing(true)} className="playlist-cancel-btn">
                   Rename
                 </button>
-                <button
-                  onClick={handleDeletePlaylist}
+                <ConfirmButton
+                  onConfirm={handleDeletePlaylist}
                   className="playlist-delete-text-btn"
+                  question="Delete this collection? Videos stay."
+                  confirmLabel="Delete"
                 >
                   Delete
-                </button>
+                </ConfirmButton>
               </div>
             )}
           </>

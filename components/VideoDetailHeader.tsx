@@ -1,6 +1,7 @@
 "use client";
 
 import { daysAgo } from "@/lib/utils";
+import ConfirmButton from "./ConfirmButton";
 import { deleteVideo, generateShareToken, revokeShareToken, updateVideoVisibility } from "@/lib/actions/video";
 import Image from "next/image";
 import Link from "next/link";
@@ -26,6 +27,7 @@ const VideoDetailHeader = ({
   videoUrl,
 }: VideoDetailHeaderProps) => {
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [visibilityState, setVisibilityState] = useState<Visibility>(visibility);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -40,13 +42,15 @@ const VideoDetailHeader = ({
   const isOwner = session?.user.id === ownerId;
 
   const handleDelete = async () => {
-    if (!confirm("Delete this video? This cannot be undone.")) return;
     setIsDeleting(true);
+    setDeleteError(null);
     try {
       await deleteVideo(videoId);
-      router.push("/");
+      router.replace("/");
+      router.refresh();
     } catch (error) {
       console.error("Error deleting video:", error);
+      setDeleteError("Couldn't delete the video. Check your connection and try again.");
       setIsDeleting(false);
     }
   };
@@ -192,13 +196,16 @@ const VideoDetailHeader = ({
             </Link>
 
             <div className="user-btn">
-              <button
+              <ConfirmButton
                 className="delete-btn"
-                onClick={handleDelete}
+                question="Delete this video forever?"
+                confirmLabel="Yes, delete"
+                onConfirm={handleDelete}
                 disabled={isDeleting}
               >
                 {isDeleting ? "Deleting…" : "Delete"}
-              </button>
+              </ConfirmButton>
+              {deleteError && <p className="delete-error" role="alert">{deleteError}</p>}
               <div className="bar" />
               {isUpdating ? (
                 <div className="update-stats"><p>Updating…</p></div>

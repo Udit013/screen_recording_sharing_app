@@ -2702,3 +2702,32 @@ input[type="file"]::file-selector-button:active { transform: translate(3px, 3px)
 .cv-row input[type="color"]::-webkit-color-swatch { border: 0; }
 .cv-row input[type="color"]::-moz-color-swatch { border: 0; }
 .ed-legend i.is-cut { background: rgba(216, 35, 42, 0.5); }
+
+/* ── Inline confirmation (components/ConfirmButton.tsx) ─────────────────── */
+.confirm-inline {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px;
+  background: var(--sc-surface); border: 2px solid var(--sc-danger); box-shadow: 3px 3px 0 var(--sc-danger);
+}
+.confirm-inline-q { font-family: var(--sc-mono); font-size: 0.78rem; font-weight: 700; color: var(--sc-ink); padding: 0 4px; }
+.confirm-inline-no, .confirm-inline-yes { padding: 7px 12px; font-size: 0.82rem; font-weight: 800; cursor: pointer; }
+.confirm-inline-no { color: var(--sc-ink); background: var(--sc-surface); box-shadow: inset 0 0 0 2px var(--sc-border); }
+.confirm-inline-yes { color: #fff; background: var(--sc-danger); box-shadow: inset 0 0 0 2px var(--sc-border); }
+.confirm-inline-no:hover { background: var(--sc-surface-2); }
+.confirm-inline-yes:hover { filter: brightness(1.08); }
+/* On a collection card the question covers the card instead of squeezing into the corner. */
+.playlist-card { position: relative; }
+.playlist-card > .confirm-inline { position: absolute; inset: 0; z-index: 2; justify-content: center; align-content: center; box-shadow: none; }
+.delete-error { flex-basis: 100%; margin: 4px 0 0; font-size: 0.82rem; font-weight: 700; color: var(--sc-danger); }
+
+/* Add to collection: a plain bordered button and menu. */
+.add-to-playlist-trigger { color: var(--sc-ink) !important; background: var(--sc-surface) !important; border: 0 !important; box-shadow: var(--sc-btn-shadow) !important; font-weight: 800; }
+.add-to-playlist-trigger:hover { background: var(--sc-surface-2) !important; }
+.add-to-playlist-menu { background: var(--sc-surface) !important; border: 2px solid var(--sc-border) !important; box-shadow: 4px 4px 0 var(--sc-hard) !important; }
+
+/* Video details tabs: a grid that wraps to a second row instead of clipping.
+   The 2px gaps show the border colour through, drawing the cell rules. */
+.video-info [role="tablist"] {
+  display: grid !important; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 2px; overflow: visible;
+  background: var(--sc-border) !important;
+}
+.video-info [role="tablist"] button { border: 0 !important; background: var(--sc-surface); padding: 9px 6px; font-size: 0.68rem; text-align: center; }

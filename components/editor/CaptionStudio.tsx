@@ -15,6 +15,7 @@ import {
   splitCaption, toEditedCaptions, toSrt, toVtt, type Caption, type CaptionStyle, type CaptionTrack,
 } from "@/lib/studio/captions";
 import { Section, Slider, Switch } from "./studio-ui";
+import ConfirmButton from "@/components/ConfirmButton";
 
 interface CaptionStudioProps {
   track: CaptionTrack;
@@ -52,7 +53,6 @@ export default function CaptionStudio({
   const replaceAt = (i: number, items: Caption[]) => setCaptions([...captions.slice(0, i), ...items, ...captions.slice(i + 1)]);
 
   const generate = () => {
-    if (captions.length > 0 && !window.confirm("Replace all captions with new ones from the transcript? You can undo this.")) return;
     setCaptions(captionsFromWords(words, { maxWords: Math.max(3, style.maxWordsPerLine * style.maxLines) }));
   };
 
@@ -103,7 +103,8 @@ export default function CaptionStudio({
       <div className="cs-actions">
         <button className="ed-btn" onClick={() => setCaptions(addCaption(captions, currentTime, duration))}
           title="Adds a caption at the playhead, if there's room">+ Caption</button>
-        <button className="ed-btn" onClick={generate} disabled={words.length === 0}>Regenerate</button>
+        <ConfirmButton className="ed-btn" onConfirm={generate} disabled={words.length === 0} skip={captions.length === 0}
+          question="Replace all captions? You can undo." confirmLabel="Replace">Regenerate</ConfirmButton>
         <button className="ed-btn" onClick={() => download("srt")} disabled={edited.length === 0}>SRT</button>
         <button className="ed-btn" onClick={() => download("vtt")} disabled={edited.length === 0}>VTT</button>
       </div>

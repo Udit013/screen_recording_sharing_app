@@ -14,6 +14,7 @@ import { uploadAudio } from "@/lib/studio/uploadAudio";
 import type { ClipLoadState } from "@/lib/studio/useMixPreview";
 import { formatDuration } from "@/lib/utils";
 import { Section, Slider, Switch } from "./studio-ui";
+import ConfirmButton from "@/components/ConfirmButton";
 
 interface TracksStudioProps {
   videoId: string;
@@ -139,8 +140,9 @@ export default function TracksStudio({
                 <button type="button" className={t.muted ? "ts-mini is-on" : "ts-mini"} aria-pressed={t.muted}
                   onClick={() => onChange(updateTrack(mix, t.id, { muted: !t.muted }))}>{t.muted ? "Muted" : "Mute"}</button>
                 <button type="button" className="ts-mini" onClick={() => pickFile(t.id)}>+ Audio</button>
-                <button type="button" className="ts-mini is-danger" aria-label={`Delete ${t.name}`}
-                  onClick={() => { if (t.clips.length === 0 || window.confirm(`Delete "${t.name}" and its ${t.clips.length} clip(s)? You can undo this.`)) onChange(removeTrack(mix, t.id)); }}>×</button>
+                <ConfirmButton className="ts-mini is-danger" ariaLabel={`Delete ${t.name}`} skip={t.clips.length === 0}
+                  question={`Delete ${t.clips.length} clip(s)? You can undo.`} confirmLabel="Delete"
+                  onConfirm={() => onChange(removeTrack(mix, t.id))}>×</ConfirmButton>
               </div>
               <Slider label="Track level" value={t.gainDb} range={GAIN} format={fmtDb}
                 onChange={(v) => onChange(updateTrack(mix, t.id, { gainDb: v }), `tg:${t.id}`)} />
