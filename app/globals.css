@@ -2455,7 +2455,7 @@ body { background-image: none; color: var(--sc-ink); }
 .detail-header .user-info h1 { font-size: clamp(1.8rem, 5vw, 3rem); }
 .app-main h2, .app-main h3 { font-family: var(--font-satoshi), system-ui, sans-serif; font-weight: 900; letter-spacing: -0.02em; }
 .header .header-container .details article p, .analytics-card-label, .ed-summary span, .as-sec-summary, .video-card .duration, .comment-date, .transcript-time,
-.ed-legend, .ed-fine, label, .cv-row > span, .app-nav-link, .app-nav-cta, .video-info [role="tablist"] button, .ed-tabs button, .theme-toggle,
+.ed-legend, .ed-fine, .cv-row > span, .app-nav-link, .app-nav-cta, .video-info [role="tablist"] button, .ed-tabs button, .theme-toggle,
 .processing-pill, .ed-chip, .tag, .navbar-brand-tag {
   font-family: var(--sc-mono); letter-spacing: 0.02em;
 }
@@ -2660,3 +2660,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 18px; background: v
 .player-controls input[type="range"]::-moz-range-thumb { background: #fff; border: 2px solid #111110; }
 .player-controls input[type="range"]::-webkit-slider-runnable-track { background: rgba(255, 255, 255, 0.3); box-shadow: none; }
 .video-info [role="tablist"] button { padding: 8px 7px; font-size: 0.66rem; }
+.ed-script-head { flex-wrap: wrap; row-gap: 10px; }
+.ed-script-head .ed-hint { flex: 1 1 220px; min-width: 0; }
+.ed-script-head .ed-retranscribe { flex: 0 1 auto; flex-wrap: wrap; }
+.ed-stage .ed-levels button.is-on span, .ed-stage .ed-levels button[aria-checked="true"] span { color: #111110 !important; }
