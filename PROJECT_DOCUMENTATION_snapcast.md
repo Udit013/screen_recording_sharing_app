@@ -2657,13 +2657,13 @@ The current look replaces the earlier glass and skeuomorphic layers. It is the l
 
 - **Responsive details.** The video page's details tabs (Transcript, AI summary, Chapters, Notes, Metadata) wrap onto a second row instead of clipping. The cells grow to fill each row, and 2 px gaps show the border colour as cell rules. On phones the editor toolbar scrolls away instead of sticking, and stacks as Back, title, actions. The side-panel tabs scroll sideways.
 
-### 31.x Recording fixes: aspect ratio and seekable files
+### 32.8 Recording fixes: aspect ratio and seekable files
 
 - **Stretched screen with the camera on.** Screen and camera were composited on a fixed 1920×1080 canvas, with the screen drawn to fill it. A MacBook screen (≈16:10) was squashed into 16:9. The canvas now takes the shared screen's own shape (`compositeSize` in `lib/hooks/useScreenRecording.ts`: long side ≤ 1920, even sizes, never upscaled; a 3024×1964 screen gives 1920×1246). Each frame is drawn "contain"-fitted, so switching to a differently shaped window mid-recording letterboxes instead of distorting. Camera bubble sizes scale with the frame. Without the camera the screen stream was recorded directly and was never stretched.
 - **Seek bar jumping or growing.** MediaRecorder writes WebM as a live stream: no duration and no seek index (Cues). In Chrome such a file reports `duration = Infinity`. `lib/media/finalizeRecording.ts` remuxes the recording when it stops (and when a crashed recording is restored) with mediabunny. It copies the VP9/Opus packets without re-encoding and writes the duration and Cues. Measured in Chrome on a real MediaRecorder file: duration `Infinity` → 3.134 s, in 15 ms, size unchanged. On any failure the original is kept. Tested in `tests/recording.test.ts`.
 - Videos recorded before this fix keep their original files.
 
-### 32.8 Destructive actions confirm inline (`components/ConfirmButton.tsx`)
+### 32.9 Destructive actions confirm inline (`components/ConfirmButton.tsx`)
 
 `window.confirm()` is blocked in many embedded and in-app browsers (in-app browsers inside other apps, desktop app panes), where it returns `false` immediately. So "Delete" silently did nothing there. Every destructive action now uses `ConfirmButton` instead: deleting a video, deleting a collection from the list or its page, regenerating captions, and removing an audio track. The button turns into the question plus Cancel and confirm. Focus moves to Cancel, Escape cancels, and nothing runs until the second press. `skip` bypasses the question when nothing would be lost, such as an empty track. A failed video delete now shows a message instead of only logging to the console. The "Tighten this recording" banner on the video page was removed earlier; the header's Edit button is the way into the editor.
 
