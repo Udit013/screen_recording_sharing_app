@@ -2639,21 +2639,18 @@ The top bar was replaced by an app shell (`components/Navbar.tsx` with `app/(roo
 - **The studio deck** stays dark in both themes and gets darker in dark mode, so it still reads as the stage.
 - **Browser chrome.** `theme-color` follows the system setting via media-qualified viewport metadata.
 
-### 32.7 Spatial glass and hardware controls (v4)
+### 32.7 Brutalism (v5, current)
 
-The current look, appended last in `globals.css` ("v4: visionOS-style spatial glass + hardware skeuomorphism"), so it overrides the earlier blocks through the same tokens.
+The current look replaces the earlier glass and skeuomorphic layers. It is the last block in `globals.css` ("v5: Brutalism"), and it overrides earlier rules through the same `--sc-*` tokens. The v4 glass layer was deleted, not stacked on.
 
-- **The room and the window.** The page background (`--sc-room`) is a softly lit room: cool aluminium in light mode, deep slate in dark. On screens ≥ 900 px the content sits in one floating, frosted glass window (`.app-main`: 36 px radius, inset 16 px, large soft shadow).
-- **Glass.** Panels (hero, cards, upload form, Convert panels, editor side panel, nav) are translucent (`--sc-surface`) with `backdrop-filter` blur and a lit rim (`--sc-rim`). Dialogs use the near-opaque `--sc-solid` so text stays readable.
-- **Navigation.** On desktop the sidebar becomes a floating glass rail of round glass buttons at every width ≥ 900 px; the active section is a solid blue key. Upload is the red record key. On phones, the top bar and the bottom dock float as glass.
-- **Colour.** Accent is vivid blue (`--sc-accent` #2f5bff light, #4c74ff dark), `--sc-led` #2de2e6 for indicator lights, `--sc-rec` #e5383b for recording. Pink and violet are gone.
-- **Type.** Display headings use Satoshi 500 with tight tracking (−0.045em) and large sizes, instead of Black; a small glowing dot leads the eyebrow label.
-- **Hardware controls.**
-  - Slider thumbs are machined knobs (`--sc-knob`, a conic brushed-metal gradient) on a recessed track; Firefox's filled part glows blue→cyan.
-  - Switches are physical toggles: a metal knob that shows a cyan LED when on.
-  - Segmented controls and the pause-level keys are a button bank; the selected key's LED lights up.
-  - The editor's play button is a domed metal key; the clock is a cyan LED readout; the playhead glows cyan.
-  - Buttons are pills; primary actions are solid blue with a glow.
-- **Video page.** The player sits in a slate bezel with a domed metal play key, a blue→cyan scrub bar with a metal thumb and an LED-style time readout. The details panel and comments are glass panels; the details tabs are a recessed button bank with the selected tab lit blue. Header actions are pills (Edit is the blue key). The old "Tighten this recording" banner was removed; Edit in the header is the way in.
-- **Editor.** The preview sits in the same monitor bezel as the player; the original/edited/removed summary is an LED panel (cyan digits on a dark well); audio-effect sections are glass keys with the open one outlined in blue; selects are recessed pills; output meters are segmented LED ladders; keyboard hints are raised keycaps.
-- **Performance.** Blur is applied to a bounded set of panels, not to every element, and there is no new dependency.
+- **Palette.** Paper `#f2efe6`, ink `#111110` and one signal colour, orange `#ff4f12` (`#ff5a1f` in dark mode). Text on orange is always ink (about 6.5:1), never white (about 3:1). Dark mode is near-black `#0f0f0e` with paper text; hard shadows turn orange there, because light shadows on black read as glare. Yellow `#ffd23f` marks processing states.
+- **Shape.** No rounded corners anywhere (`border-radius: 0` globally). Borders are 2 px ink. Raised things use a hard offset shadow (3 px for controls, 6 px for panels) and no blur. Pressing a button drops it onto its shadow.
+- **Surfaces.** Everything is opaque; `backdrop-filter` is off globally. On phones, the top bar is sticky and the tab bar spans the full width at the bottom. Both are solid, with a 2 px rule, and the page is padded by the tab-bar height plus the safe-area inset, so content never sits under either. That overlap was what made the phone layout look broken.
+- **Type.** Satoshi 900 with tight tracking for headings. A system monospace for labels, tabs, buttons in the nav, tags, timecodes and the eyebrow, which is an orange label block.
+- **Controls.**
+  - Segmented controls and tab strips are bordered cells, and the selected one is filled with ink.
+  - Switches are rectangles that turn orange with the block at the right.
+  - Range thumbs are ink blocks, with white blocks on the video player.
+  - Fields are flat with a 2 px border; focus is a 3 px orange outline.
+- **Editor.** The stage and timeline stay a black deck. The play key and the selected pause level are orange blocks, readouts are monospace, and the waveform is orange.
+- **Logo.** An ink square with a paper frame, an orange play triangle and paper level bars. No gradients. The favicon, touch icon and OG image follow it.
