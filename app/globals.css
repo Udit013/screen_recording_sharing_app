@@ -2727,7 +2727,9 @@ input[type="file"]::file-selector-button:active { transform: translate(3px, 3px)
 /* Video details tabs: a grid that wraps to a second row instead of clipping.
    The 2px gaps show the border colour through, drawing the cell rules. */
 .video-info [role="tablist"] {
-  display: grid !important; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 2px; overflow: visible;
-  background: var(--sc-border) !important;
+  display: flex !important; flex-wrap: wrap; gap: 2px; overflow: visible; background: var(--sc-border) !important;
 }
-.video-info [role="tablist"] button { border: 0 !important; background: var(--sc-surface); padding: 9px 6px; font-size: 0.68rem; text-align: center; }
+/* Cells grow to fill each row, so a wrapped row has no empty hole. */
+.video-info [role="tablist"] button { flex: 1 1 auto; border: 0 !important; background: var(--sc-surface); padding: 9px 8px; font-size: 0.68rem; text-align: center; }
+.detail-header .cta .user-btn > .delete-btn { color: var(--sc-danger); background: var(--sc-surface); box-shadow: inset 0 0 0 2px var(--sc-danger), 3px 3px 0 var(--sc-danger); }
+.detail-header .cta .user-btn > .delete-btn:hover { background: var(--sc-danger); color: #fff; }
