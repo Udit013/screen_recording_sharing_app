@@ -655,6 +655,10 @@ The signature is a cryptographic hash computed over exactly `{ timestamp, public
 
 If the account moves to a paid plan with a bigger limit, change `UPLOAD_LIMIT_BYTES` in `lib/upload/plan.ts`.
 
+**Phones failing even small uploads: the same-origin fallback.** If the direct request to `api.cloudinary.com` gets no response at all (a carrier or network that blocks that host; Indian carriers blocked Supabase's API this way in Feb 2026), the upload switches, for that chunk and the rest, to `/cu/<video|image>/upload` on this app's own domain. That path is a rewrite in `next.config.ts`, pinned to this account's upload endpoint. Cloudinary still requires the server-issued signature, and unsigned requests are refused. It is excluded from the middleware on purpose: a body that passes through a Vercel function is capped at 4.5 MB (`FUNCTION_PAYLOAD_TOO_LARGE`), below Cloudinary's 5 MB minimum chunk, while the edge rewrite streams 20 MB chunks. Verified on production: a real 8.7 MB video uploaded through `/cu`, and a 20 MB chunk reached Cloudinary.
+
+**Failure reports.** The browser talks to Cloudinary directly, so the server never saw upload failures. The upload page now sends each failure, and each fallback, to `reportUploadIssue` (`lib/actions/diagnostics.ts`, signed-in users only). That logs one `[upload] {…}` line with stage, error, HTTP status, route, chunk, file size/type, online state, connection type and user agent. No file names or contents. Read with `vercel logs snapcast-studio.vercel.app | grep "\[upload\]"` (Hobby keeps about 30 minutes).
+
 ### 7.2 The authorization checks around signed URLs
 
 Two extra checks close real security gaps:
