@@ -33,6 +33,15 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Same-origin route to Cloudinary's upload API, used only when a phone
+  // can't reach api.cloudinary.com directly (see lib/upload/cloudinaryUpload.ts).
+  // Pinned to this account's video/image upload endpoints: not an open proxy.
+  async rewrites() {
+    const cloud = process.env.CLOUDINARY_CLOUD_NAME;
+    return cloud
+      ? [{ source: "/cu/:type(video|image)/upload", destination: `https://api.cloudinary.com/v1_1/${cloud}/:type/upload` }]
+      : [];
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

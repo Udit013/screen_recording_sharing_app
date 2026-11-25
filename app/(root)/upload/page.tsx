@@ -12,7 +12,8 @@ import { useRouter } from "next/navigation";
 import { FileInput, FormField } from "@/components";
 import { useFileInput } from "@/lib/hooks/useFileInput";
 import { MAX_THUMBNAIL_SIZE, MAX_VIDEO_SIZE } from "@/constants";
-import { uploadToCloudinary, type CloudinaryUploadParams } from "@/lib/upload/cloudinaryUpload";
+import { uploadToCloudinary, UploadError, type CloudinaryUploadParams } from "@/lib/upload/cloudinaryUpload";
+import { reportUploadIssue } from "@/lib/actions/diagnostics";
 import { UPLOAD_LIMIT_BYTES, formatMB } from "@/lib/upload/plan";
 import type { CompressEvent } from "@/lib/upload/compress.worker";
 
@@ -126,6 +127,15 @@ const UploadPage = () => {
     }
 
     setIsSubmitting(true);
+    // Where we are, for the failure report (see lib/actions/diagnostics.ts).
+    let stage = "credentials";
+    const net = () => ({
+      online: navigator.onLine,
+      connection: (navigator as Navigator & { connection?: { effectiveType?: string } }).connection?.effectiveType,
+    });
+    const onFallback = (reason: string, chunk: number) => {
+      reportUploadIssue({ event: "fallback", stage, message: reason, chunk, fileBytes: video.file?.size, fileType: video.file?.type, ...net() }).catch(() => {});
+    };
     try {
       setUploadProgress("Getting upload credentials…");
       const { videoId, ...videoUploadParams } = await getVideoUploadUrl();
@@ -135,6 +145,7 @@ const UploadPage = () => {
       // this device first, so the upload is accepted.
       let fileToUpload: File = video.file;
       if (fileToUpload.size > UPLOAD_LIMIT_BYTES) {
+        stage = "compress";
         setPercentLabel(`Compressing ${formatMB(fileToUpload.size)} video…`);
         setUploadPercent(0);
         fileToUpload = await compressForUpload(fileToUpload, setUploadPercent);
@@ -143,13 +154,14 @@ const UploadPage = () => {
         }
       }
 
+      stage = "upload-video";
       setUploadProgress("Uploading video…");
       setPercentLabel("Uploading…");
       setUploadPercent(0);
       const videoResult = await uploadToCloudinary(
         fileToUpload,
         videoUploadParams as CloudinaryUploadParams,
-        setUploadPercent
+        { onProgress: setUploadPercent, onFallback }
       );
       setUploadPercent(null);
 
@@ -160,15 +172,18 @@ const UploadPage = () => {
       }/video/upload/so_1/${videoResult.public_id}.jpg`;
 
       if (thumbnail.file) {
+        stage = "upload-thumbnail";
         setUploadProgress("Uploading thumbnail…");
         const thumbParams = await getThumbnailUploadUrl(videoId);
         const thumbResult = await uploadToCloudinary(
           thumbnail.file,
-          thumbParams as CloudinaryUploadParams
+          thumbParams as CloudinaryUploadParams,
+          { onFallback }
         );
         thumbnailUrl = thumbResult.secure_url;
       }
 
+      stage = "save";
       setUploadProgress("Saving video details…");
       await saveVideoDetails({
         videoId,
@@ -189,7 +204,15 @@ const UploadPage = () => {
       router.push(`/video/${videoId}`);
     } catch (err) {
       console.error("Upload error:", err);
-      setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message || "Upload failed. Please try again.");
+      reportUploadIssue({
+        event: "failed", stage, message,
+        status: err instanceof UploadError ? err.detail.status : undefined,
+        via: err instanceof UploadError ? err.detail.via : undefined,
+        chunk: err instanceof UploadError ? err.detail.chunk : undefined,
+        fileBytes: video.file?.size, fileType: video.file?.type, ...net(),
+      }).catch(() => {});
     } finally {
       setIsSubmitting(false);
       setUploadProgress("");

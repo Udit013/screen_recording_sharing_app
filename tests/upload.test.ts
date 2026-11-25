@@ -44,15 +44,15 @@ describe("chunk ranges", () => {
 // A scripted XMLHttpRequest: each send() takes the next outcome.
 type Outcome = { status: number; body?: unknown } | "drop";
 function fakeXhr(outcomes: Outcome[]) {
-  const sent: Array<{ headers: Record<string, string> }> = [];
+  const sent: Array<{ headers: Record<string, string>; url: string }> = [];
   class X {
-    status = 0; responseText = ""; headers: Record<string, string> = {};
+    status = 0; responseText = ""; headers: Record<string, string> = {}; url = "";
     upload = { onprogress: null as null | ((e: { loaded: number }) => void) };
     onload: null | (() => void) = null; onerror: null | (() => void) = null; ontimeout: null | (() => void) = null;
-    open() {}
+    open(_m: string, u: string) { this.url = u; }
     setRequestHeader(k: string, v: string) { this.headers[k] = v; }
     send() {
-      sent.push({ headers: this.headers });
+      sent.push({ headers: this.headers, url: this.url });
       const o = outcomes.shift() ?? "drop";
       queueMicrotask(() => {
         if (o === "drop") return this.onerror?.();
@@ -73,7 +73,7 @@ describe("chunked upload", () => {
   it("sends Content-Range chunks under one upload id and returns the final asset", async () => {
     const sent = fakeXhr([{ status: 200, body: { done: false } }, { status: 200, body: { secure_url: "https://v.mp4", public_id: "videos/a" } }]);
     const file = new Blob([new Uint8Array(CHUNK_BYTES + 10)]);
-    const r = await uploadToCloudinary(file, params);
+    const r = await uploadToCloudinary(file, params, { proxyUrl: null });
     expect(r.secure_url).toBe("https://v.mp4");
     expect(sent.map((s) => s.headers["Content-Range"])).toEqual([`bytes 0-${CHUNK_BYTES - 1}/${CHUNK_BYTES + 10}`, `bytes ${CHUNK_BYTES}-${CHUNK_BYTES + 9}/${CHUNK_BYTES + 10}`]);
     expect(new Set(sent.map((s) => s.headers["X-Unique-Upload-Id"])).size).toBe(1);
@@ -82,7 +82,7 @@ describe("chunked upload", () => {
   it("retries a dropped chunk instead of failing the whole upload", async () => {
     vi.useFakeTimers();
     const sent = fakeXhr(["drop", { status: 503 }, { status: 200, body: { secure_url: "https://v.mp4", public_id: "videos/a" } }]);
-    const p = uploadToCloudinary(new Blob([new Uint8Array(100)]), params);
+    const p = uploadToCloudinary(new Blob([new Uint8Array(100)]), params, { proxyUrl: null });
     await vi.runAllTimersAsync();
     expect((await p).secure_url).toBe("https://v.mp4");
     expect(sent).toHaveLength(3);
@@ -90,7 +90,17 @@ describe("chunked upload", () => {
 
   it("reports the server's reason, not 'network error', and doesn't retry a rejection", async () => {
     const sent = fakeXhr([{ status: 400, body: { error: { message: "File size too large. Got 150000000. Maximum is 104857600." } } }]);
-    await expect(uploadToCloudinary(new Blob([new Uint8Array(100)]), params)).rejects.toThrow(/File size too large/);
+    await expect(uploadToCloudinary(new Blob([new Uint8Array(100)]), params, { proxyUrl: null })).rejects.toThrow(/File size too large/);
     expect(sent).toHaveLength(1);
+  });
+
+  it("switches to the same-origin route when Cloudinary can't be reached, and keeps the upload id", async () => {
+    const sent = fakeXhr(["drop", { status: 200, body: { done: false } }, { status: 200, body: { secure_url: "https://v.mp4", public_id: "videos/a" } }]);
+    const fallbacks: number[] = [];
+    const r = await uploadToCloudinary(new Blob([new Uint8Array(CHUNK_BYTES + 1)]), params, { onFallback: (_r, chunk) => fallbacks.push(chunk) });
+    expect(r.secure_url).toBe("https://v.mp4");
+    expect(sent.map((x) => x.url)).toEqual([params.uploadUrl, "/cu/video/upload", "/cu/video/upload"]);
+    expect(fallbacks).toEqual([0]);
+    expect(new Set(sent.map((s) => s.headers["X-Unique-Upload-Id"])).size).toBe(1);
   });
 });
