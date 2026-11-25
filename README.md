@@ -97,7 +97,7 @@ From test recordings with known pauses, checked against ffmpeg:
 | **On-device transcription** | Whisper with word timestamps for recorded *and* uploaded videos; feeds search, the transcript tab and AI chapters |
 | **Screen Recording** | Browser-native MediaRecorder API — no plugins, no extensions |
 | **Webcam PiP Overlay** | Canvas API composites circular webcam over screen in real-time |
-| **Video Upload** | Direct signed upload to Cloudinary CDN |
+| **Video Upload** | Direct signed, chunked upload to Cloudinary (retries per 20 MB chunk); videos over the 100 MB free-plan limit, such as phone recordings, are compressed on the device first |
 | **Studio editor** | Captions (6 animated templates, SRT/VTT), reframing and colour, a full audio studio with pitch correction, multitrack music/voiceover/effects, MP4/MP3/M4A/Opus/WAV export |
 | **Multilingual transcription** | English, Hindi, Sanskrit and Hinglish (per-phrase language detection), Devanagari and Latin scripts, word timestamps |
 | **Convert** | Video → audio, audio → video with visualizer (Reels/Shorts/YouTube shapes), on-device vocal/instrumental separation (Spleeter) |

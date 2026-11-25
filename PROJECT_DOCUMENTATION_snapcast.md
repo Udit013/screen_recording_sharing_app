@@ -643,6 +643,18 @@ export function getSignedUploadParams(folder: string, publicId: string, resource
 
 The signature is a cryptographic hash computed over exactly `{ timestamp, public_id }` and the secret key. **This is not an "upload preset"** — it's scoped to one exact asset name (`public_id`). The browser receives the signature, timestamp, public ID, and the (non-secret) API key, and can use them to make **exactly one** authorized upload to that one exact asset slot — it cannot reuse the signature to upload anything else, and it never learns the actual secret.
 
+### 7.1a Phone uploads: the 100 MB limit, on-device compression and chunked upload
+
+**The bug.** Uploads from phones failed with "Upload failed — network error". This Cloudinary account is on the Free plan, whose `media_limits.video_max_size_bytes` is **104,857,600 (100 MB) per video**, while the app accepted 500 MB. Phones record far more than that (1080p ≈ 130 MB a minute, 4K ≈ 350 MB). Over the limit, the single upload request was cut off without a CORS-readable response, so the browser could only report a network error. One long request is also fragile on mobile networks (a network switch or a locked screen kills it).
+
+**The fix (free, nothing new installed):**
+- **Compress on the device** (`lib/upload/plan.ts`, `lib/upload/compress.worker.ts`). A video over 100 MB is re-encoded in a worker with mediabunny/WebCodecs to MP4 (H.264 + AAC 128 kb/s), at the bitrate that lands it at ≤ 88% of the limit (capped at 8 Mb/s). The short side scales with the budget (1080 / 720 / 540 / 360 px; portrait kept; never upscaled). Videos too long to stay watchable (under 0.3 Mb/s, about 2 h 10 min) are refused with a "trim it to under N minutes" message. Measured: a 121 MB, 45 s, 4K portrait clip → 40.6 MB, 1080×1920, in 7.4 s.
+- **Chunked upload with retries** (`lib/upload/cloudinaryUpload.ts`). Cloudinary's chunked protocol: 20 MB chunks with `X-Unique-Upload-Id` and `Content-Range`, the same signed params on every chunk. Each chunk is retried up to 4 times with back-off on a dropped connection, a timeout, 408, 429 or 5xx; a 4xx rejection stops at once.
+- **Readable errors.** The server's reason is shown (for example "File size too large. Got 121197198. Maximum is 104857600."). A file over the input cap (now 2 GB) is no longer silently ignored by `useFileInput`; it says why.
+- Verified against the real Cloudinary API from the browser: the compressed clip uploaded in 3 chunks (8.7 s); the raw 121 MB file came back with the readable rejection above. The test asset was deleted.
+
+If the account moves to a paid plan with a bigger limit, change `UPLOAD_LIMIT_BYTES` in `lib/upload/plan.ts`.
+
 ### 7.2 The authorization checks around signed URLs
 
 Two extra checks close real security gaps:

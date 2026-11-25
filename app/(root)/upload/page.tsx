@@ -12,53 +12,25 @@ import { useRouter } from "next/navigation";
 import { FileInput, FormField } from "@/components";
 import { useFileInput } from "@/lib/hooks/useFileInput";
 import { MAX_THUMBNAIL_SIZE, MAX_VIDEO_SIZE } from "@/constants";
+import { uploadToCloudinary, type CloudinaryUploadParams } from "@/lib/upload/cloudinaryUpload";
+import { UPLOAD_LIMIT_BYTES, formatMB } from "@/lib/upload/plan";
+import type { CompressEvent } from "@/lib/upload/compress.worker";
 
-interface CloudinaryUploadParams {
-  uploadUrl: string;
-  publicId: string;
-  signature: string;
-  timestamp: number;
-  apiKey: string;
-  cloudName: string;
-  resourceType: string;
-}
-
-interface CloudinaryUploadResult {
-  secure_url: string;
-  public_id: string;
-  duration?: number;
-}
-
-// XHR instead of fetch so large uploads report byte-level progress.
-const uploadToCloudinary = (
-  file: File,
-  params: CloudinaryUploadParams,
-  onProgress?: (pct: number) => void
-): Promise<CloudinaryUploadResult> =>
+/** Runs the on-device compression worker; resolves to an MP4 file under the upload limit. */
+const compressForUpload = (file: File, onProgress: (pct: number) => void): Promise<File> =>
   new Promise((resolve, reject) => {
-    const form = new FormData();
-    form.append("file", file);
-    form.append("api_key", params.apiKey);
-    form.append("timestamp", params.timestamp.toString());
-    form.append("signature", params.signature);
-    form.append("public_id", params.publicId);
-
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", params.uploadUrl);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        onProgress?.(Math.round((e.loaded / e.total) * 100));
+    const worker = new Worker(new URL("../../../lib/upload/compress.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (e: MessageEvent<CompressEvent>) => {
+      const m = e.data;
+      if (m.type === "progress") onProgress(Math.round(m.fraction * 100));
+      else {
+        worker.terminate();
+        if (m.type === "done") resolve(new File([m.buffer], file.name.replace(/\.[^.]+$/, "") + ".mp4", { type: "video/mp4" }));
+        else reject(new Error(m.message));
       }
     };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(JSON.parse(xhr.responseText) as CloudinaryUploadResult);
-      } else {
-        reject(new Error(`Upload failed (${xhr.status})`));
-      }
-    };
-    xhr.onerror = () => reject(new Error("Upload failed — network error"));
-    xhr.send(form);
+    worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message || "Compression failed.")); };
+    worker.postMessage({ file });
   });
 
 const UploadPage = () => {
@@ -66,6 +38,7 @@ const UploadPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
+  const [percentLabel, setPercentLabel] = useState("Uploading…");
   const [error, setError] = useState<string | null>(null);
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [formData, setFormData] = useState<VideoFormValues>({
@@ -158,9 +131,23 @@ const UploadPage = () => {
       const { videoId, ...videoUploadParams } = await getVideoUploadUrl();
       if (!videoId) throw new Error("Failed to get video upload credentials");
 
+      // Over the storage limit (phone recordings usually are): compress on
+      // this device first, so the upload is accepted.
+      let fileToUpload: File = video.file;
+      if (fileToUpload.size > UPLOAD_LIMIT_BYTES) {
+        setPercentLabel(`Compressing ${formatMB(fileToUpload.size)} video…`);
+        setUploadPercent(0);
+        fileToUpload = await compressForUpload(fileToUpload, setUploadPercent);
+        if (fileToUpload.size > UPLOAD_LIMIT_BYTES) {
+          throw new Error(`Even compressed, this video is ${formatMB(fileToUpload.size)}; the limit is ${formatMB(UPLOAD_LIMIT_BYTES)}. Trim it and try again.`);
+        }
+      }
+
       setUploadProgress("Uploading video…");
+      setPercentLabel("Uploading…");
+      setUploadPercent(0);
       const videoResult = await uploadToCloudinary(
-        video.file,
+        fileToUpload,
         videoUploadParams as CloudinaryUploadParams,
         setUploadPercent
       );
@@ -207,6 +194,7 @@ const UploadPage = () => {
       setIsSubmitting(false);
       setUploadProgress("");
       setUploadPercent(null);
+      setPercentLabel("Uploading…");
     }
   };
 
@@ -215,7 +203,9 @@ const UploadPage = () => {
       <BackLink fallbackHref="/" fallbackLabel="Library" />
       <h1>Upload a video</h1>
 
-      {error && <div className="error-field">{error}</div>}
+      {(error || video.error || thumbnail.error) && (
+        <div className="error-field" role="alert">{error || video.error || thumbnail.error}</div>
+      )}
 
       <form
         className="rounded-20 gap-6 w-full flex flex-col shadow-10 px-5 py-7.5"
@@ -301,7 +291,7 @@ const UploadPage = () => {
         <button type="submit" disabled={isSubmitting} className="submit-button">
           {isSubmitting
             ? uploadPercent !== null
-              ? `Uploading… ${uploadPercent}%`
+              ? `${percentLabel} ${uploadPercent}%`
               : uploadProgress || "Uploading…"
             : "Upload Video"}
         </button>

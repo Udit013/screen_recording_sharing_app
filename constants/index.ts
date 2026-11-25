@@ -1,4 +1,6 @@
-export const MAX_VIDEO_SIZE = 500 * 1024 * 1024;
+// Largest file the upload page accepts. Anything over the storage limit
+// (100 MB) is compressed on the device first; see lib/upload/plan.ts.
+export const MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024;
 export const MAX_THUMBNAIL_SIZE = 10 * 1024 * 1024;
 
 export const filterOptions = [
