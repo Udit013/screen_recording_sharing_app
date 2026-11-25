@@ -166,7 +166,7 @@ function ToVideo({ busy, onRun }: { busy: boolean; onRun: (r: ConvertRequest, na
   const [audio, setAudio] = useState<File | null>(null);
   const [image, setImage] = useState<File | null>(null);
   const [duration, setDuration] = useState(0);
-  const [opts, setOpts] = useState<CoverOptions>({ aspect: "9:16", shortSide: 720, fps: 30, background: "#16131f", accent: "#ff4393", visualizer: "bars", title: "", dim: 0.35 });
+  const [opts, setOpts] = useState<CoverOptions>({ aspect: "9:16", shortSide: 720, fps: 30, background: "#111110", accent: "#ff4f12", visualizer: "bars", title: "", dim: 0.35 });
   const [quality, setQuality] = useState<"low" | "medium" | "high">("medium");
   const [audioKbps, setAudioKbps] = useState(192);
   const set = (p: Partial<CoverOptions>) => setOpts((o) => ({ ...o, ...p }));

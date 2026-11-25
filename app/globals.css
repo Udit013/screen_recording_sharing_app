@@ -2690,3 +2690,15 @@ input[type="file"]::file-selector-button {
 input[type="file"]::file-selector-button:active { transform: translate(3px, 3px); box-shadow: inset 0 0 0 2px var(--sc-border); }
 .cv-file { gap: 10px; }
 .cv-row select, .cv-row input[type="text"] { border-radius: 0; padding: 10px 12px; }
+/* Convert, audio → video: a framed preview that leaves room on phones,
+   consistent labels, and bordered colour swatches. */
+.cv-preview canvas { border: 2px solid var(--sc-border); box-shadow: 4px 4px 0 var(--sc-hard); }
+@media (max-width: 899px) { .cv-preview { position: static; } .cv-preview canvas { max-height: 42vh; } }
+.cv-file > span, .cv-formats legend, .cv-panel fieldset legend, .vs-aspects legend, .cv-row > span {
+  font-family: var(--sc-mono); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.02em; color: var(--sc-ink);
+}
+.cv-row input[type="color"] { width: 48px; height: 32px; padding: 2px; border: 2px solid var(--sc-border) !important; background: var(--sc-surface); cursor: pointer; }
+.cv-row input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.cv-row input[type="color"]::-webkit-color-swatch { border: 0; }
+.cv-row input[type="color"]::-moz-color-swatch { border: 0; }
+.ed-legend i.is-cut { background: rgba(216, 35, 42, 0.5); }
