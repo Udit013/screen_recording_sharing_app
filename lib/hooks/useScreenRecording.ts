@@ -7,6 +7,7 @@ import {
 } from "@/lib/utils";
 import { DEFAULT_RECORDING_CONFIG } from "@/constants";
 import { createTranscriber, type Transcriber } from "@/lib/speech";
+import { finalizeRecording } from "@/lib/media/finalizeRecording";
 import {
   appendRecordingChunk,
   getRecoverableChunks,
@@ -14,6 +15,30 @@ import {
 } from "@/lib/recordingStore";
 
 const PIP_SIZES: Record<PipSize, number> = { sm: 160, md: 240, lg: 320 };
+/** Longest side of the composited recording; the screen's own aspect ratio is kept. */
+const MAX_CANVAS_SIDE = 1920;
+
+/**
+ * Canvas size for compositing a screen of `w`×`h`: same aspect ratio (a fixed
+ * 1920×1080 canvas stretched 16:10 Mac screens sideways), long side at most
+ * MAX_CANVAS_SIDE, even numbers for the encoder.
+ */
+export function compositeSize(w: number, h: number): { width: number; height: number } {
+  if (!(w > 0) || !(h > 0)) return { width: 1920, height: 1080 };
+  const scale = Math.min(1, MAX_CANVAS_SIDE / Math.max(w, h));
+  const even = (n: number) => Math.max(2, Math.round((n * scale) / 2) * 2);
+  return { width: even(w), height: even(h) };
+}
+
+/** Draws the screen "contain"-fitted, so a mid-recording switch to a differently shaped window letterboxes instead of distorting. */
+function drawContain(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, cw: number, ch: number) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const scale = Math.min(cw / vw, ch / vh);
+  const dw = vw * scale, dh = vh * scale;
+  if (dw < cw - 0.5 || dh < ch - 0.5) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cw, ch); }
+  ctx.drawImage(video, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+}
 const PIP_MARGIN = 24;
 
 // requestAnimationFrame is suspended entirely while the tab is hidden, which
@@ -130,12 +155,16 @@ export const useScreenRecording = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleRecordingStop = useCallback(() => {
-    const { blob, url } = createRecordingBlob(chunksRef.current);
+  const handleRecordingStop = useCallback(async () => {
     const duration = Math.round(getElapsed());
     stopTicker();
     transcriberRef.current?.stop();
     const segments = transcriberRef.current?.getSegments() ?? [];
+    // Write the duration and seek index MediaRecorder leaves out (see finalizeRecording).
+    const raw = createRecordingBlob(chunksRef.current);
+    const blob = await finalizeRecording(raw.blob);
+    let url = raw.url;
+    if (blob !== raw.blob) { URL.revokeObjectURL(raw.url); url = URL.createObjectURL(blob); }
     setState((prev) => ({
       ...prev,
       recordedBlob: blob,
@@ -164,22 +193,25 @@ export const useScreenRecording = () => {
 
         if (withCamera && cameraStream) {
           // Composite screen + webcam PiP on a canvas.
-          const canvas = document.createElement("canvas");
-          canvas.width = 1920;
-          canvas.height = 1080;
-          const ctx = canvas.getContext("2d")!;
-
           const screenVideo = document.createElement("video");
           screenVideo.srcObject = displayStream;
           screenVideo.muted = true;
           await screenVideo.play();
+
+          // Match the shared screen's shape instead of forcing 16:9.
+          const canvas = document.createElement("canvas");
+          const dims = compositeSize(screenVideo.videoWidth, screenVideo.videoHeight);
+          canvas.width = dims.width;
+          canvas.height = dims.height;
+          const ctx = canvas.getContext("2d")!;
 
           const camVideo = document.createElement("video");
           camVideo.srcObject = cameraStream;
           camVideo.muted = true;
           await camVideo.play();
 
-          const size = PIP_SIZES[pipSize];
+          // Bubble sizes were tuned for a 1080-high frame; keep that proportion.
+          const size = Math.round(PIP_SIZES[pipSize] * (Math.min(canvas.width, canvas.height) / 1080));
           const pipW = size;
           const pipH = pipShape === "circle" ? size : Math.round(size * 0.62);
           const pipX = pipPosition.includes("l")
@@ -192,7 +224,7 @@ export const useScreenRecording = () => {
           let running = true;
           const draw = () => {
             if (!running) return;
-            ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+            drawContain(ctx, screenVideo, canvas.width, canvas.height);
 
             ctx.save();
             ctx.beginPath();
@@ -406,7 +438,10 @@ export const useScreenRecording = () => {
   const restoreRecording = useCallback(async (): Promise<boolean> => {
     const chunks = await getRecoverableChunks();
     if (chunks.length === 0) return false;
-    const { blob, url } = createRecordingBlob(chunks);
+    const raw = createRecordingBlob(chunks);
+    const blob = await finalizeRecording(raw.blob);
+    let url = raw.url;
+    if (blob !== raw.blob) { URL.revokeObjectURL(raw.url); url = URL.createObjectURL(blob); }
     setState((prev) => {
       if (prev.recordedVideoUrl) URL.revokeObjectURL(prev.recordedVideoUrl);
       return {
