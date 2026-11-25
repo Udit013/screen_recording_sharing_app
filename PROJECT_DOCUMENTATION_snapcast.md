@@ -2654,3 +2654,14 @@ The current look replaces the earlier glass and skeuomorphic layers. It is the l
   - Fields are flat with a 2 px border; focus is a 3 px orange outline.
 - **Editor.** The stage and timeline stay a black deck. The play key and the selected pause level are orange blocks, readouts are monospace, and the waveform is orange.
 - **Logo.** An ink square with a paper frame, an orange play triangle and paper level bars. No gradients. The favicon, touch icon and OG image follow it.
+
+- **Responsive details.** The video page's details tabs (Transcript, AI summary, Chapters, Notes, Metadata) wrap onto a second row instead of clipping. The cells grow to fill each row, and 2 px gaps show the border colour as cell rules. On phones the editor toolbar scrolls away instead of sticking, and stacks as Back, title, actions. The side-panel tabs scroll sideways.
+
+### 32.8 Destructive actions confirm inline (`components/ConfirmButton.tsx`)
+
+`window.confirm()` is blocked in many embedded and in-app browsers (in-app browsers inside other apps, desktop app panes), where it returns `false` immediately. So "Delete" silently did nothing there. Every destructive action now uses `ConfirmButton` instead: deleting a video, deleting a collection from the list or its page, regenerating captions, and removing an audio track. The button turns into the question plus Cancel and confirm. Focus moves to Cancel, Escape cancels, and nothing runs until the second press. `skip` bypasses the question when nothing would be lost, such as an empty track. A failed video delete now shows a message instead of only logging to the console. The "Tighten this recording" banner on the video page was removed earlier; the header's Edit button is the way into the editor.
+
+**Back links** (`components/BackLink.tsx` with `lib/navigation.ts`) were re-verified on production:
+- Library → video → Back returns to the Library.
+- My videos → video → Back returns to My videos.
+- A video opened directly from a link falls back to the Library instead of leaving the site.
